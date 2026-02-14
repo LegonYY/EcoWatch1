@@ -1,0 +1,3329 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EcoWatch - Карта распространения фитонцидов ели</title>
+
+    <!-- Meta Tags -->
+    <meta name="description"
+        content="Интерактивная карта для визуализации и изучения распространения фитонцидов от елей. Школьный научный проект." />
+    <meta name="author" content="Пашкина Екатерина, КГУ Средняя школа № 7 города Алтай" />
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Leaflet CSS &amp; JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+    <!-- Supabase SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+
+
+    <style>
+        #map {
+            height: 100vh;
+            height: 100dvh;
+            /* Mobile browser support */
+            width: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 0;
+        }
+
+        .leaflet-draw-toolbar a {
+            background-color: white !important;
+        }
+
+        /* Hide Leaflet attribution */
+        .leaflet-control-attribution {
+            display: none !important;
+        }
+
+        .polygon-id-tooltip {
+            background: transparent;
+            border: none;
+            box-shadow: none;
+            font-family: monospace;
+            font-weight: bold;
+            color: rgba(255, 255, 255, 0.9);
+            text-shadow: 1px 1px 2px black;
+            font-size: 14px;
+        }
+
+        /* Move Leaflet controls lower to avoid overlap with sticky header */
+        .leaflet-top {
+            top: 85px !important;
+        }
+
+        /* Custom gradient for heatmap legend */
+        .gradient-bar {
+            background: linear-gradient(to right,
+                    rgba(34, 139, 34, 0.1),
+                    rgba(34, 139, 34, 0.3),
+                    rgba(34, 139, 34, 0.5),
+                    rgba(34, 139, 34, 0.7),
+                    rgba(34, 139, 34, 0.9));
+        }
+
+        /* Canvas for particles */
+        #particleCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 400;
+        }
+
+        /* Canvas for wind visualization */
+        #windCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 350;
+        }
+
+        /* Tree marker shadow effect */
+        .tree-marker {
+            filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.8));
+        }
+
+        /* Draggable Tree Icon (DivIcon) */
+        .tree-marker-icon {
+            background-color: #2d5016;
+            border: 3px solid #ffffff;
+            border-radius: 50%;
+            box-sizing: border-box;
+            width: 16px;
+            height: 16px;
+            box-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .tree-marker-icon:hover {
+            transform: scale(1.2);
+            border-color: #ffff00;
+        }
+
+        /* Smooth transitions for dark mode */
+        * {
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+        }
+
+        /* Language dropdown */
+        .lang-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 0.5rem;
+            background: white;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            min-width: 150px;
+            z-index: 50;
+        }
+
+        .dark .lang-dropdown {
+            background: #1e293b;
+        }
+
+        .lang-dropdown.active {
+            display: block;
+        }
+
+        .lang-option {
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .lang-option:hover {
+            background: #f3f4f6;
+        }
+
+        .dark .lang-option:hover {
+            background: #334155;
+        }
+
+        /* Performance optimizations removed to fix Leaflet rendering issues */
+    </style>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        forest: {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            200: '#bbf7d0',
+                            300: '#86efac',
+                            400: '#4ade80',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                            800: '#166534',
+                            900: '#14532d',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-gray-50 dark:bg-gray-900">
+
+    <!-- Top Header Bar -->
+    <div class="absolute top-4 left-4 right-4 z-[999] flex items-center justify-between pointer-events-none">
+        <!-- Back Button & Controls Container -->
+        <!-- Unified Controls Container -->
+        <div class="flex items-center bg-white dark:bg-gray-800 rounded-lg shadow-lg pointer-events-auto p-1">
+            <!-- Back Button -->
+            <a href="index.html"
+                class="hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 rounded-md transition-colors flex items-center gap-2 font-semibold focus:outline-none focus:ring-2 focus:ring-forest-500">
+                <i class="fas fa-arrow-left"></i>
+                <span data-i18n="backButton" class="hidden md:inline">На главную</span>
+            </a>
+
+            <!-- Divider -->
+            <div class="w-px h-6 bg-gray-200 dark:bg-gray-700 mx-1"></div>
+
+            <!-- Language and Theme Controls -->
+            <div class="flex items-center gap-1">
+                <!-- Language Selector -->
+                <div class="relative">
+                    <button id="langBtn"
+                        class="flex items-center gap-2 px-3 py-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-forest-500">
+                        <i class="fas fa-globe"></i>
+                        <span id="currentLang">RU</span>
+                        <i class="fas fa-chevron-down text-xs"></i>
+                    </button>
+                    <!-- Dropdown positioned relative to button -->
+                    <div id="langDropdown" class="lang-dropdown mt-2">
+                        <div class="lang-option" data-lang="ru"><span>🇷🇺</span><span
+                                class="text-gray-700 dark:text-gray-200">Русский</span></div>
+                        <div class="lang-option" data-lang="kz"><span>🇰🇿</span><span
+                                class="text-gray-700 dark:text-gray-200">Қазақша</span></div>
+                        <div class="lang-option" data-lang="en"><span>🇬🇧</span><span
+                                class="text-gray-700 dark:text-gray-200">English</span></div>
+                        <div class="lang-option" data-lang="es"><span>🇪🇸</span><span
+                                class="text-gray-700 dark:text-gray-200">Español</span></div>
+                        <div class="lang-option" data-lang="zh"><span>🇨🇳</span><span
+                                class="text-gray-700 dark:text-gray-200">中文</span></div>
+                    </div>
+                </div>
+
+                <!-- Divider -->
+                <div class="w-px h-6 bg-gray-200 dark:bg-gray-700 mx-1"></div>
+
+                <!-- Theme Toggle -->
+                <button id="themeToggle"
+                    class="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-forest-500">
+                    <i class="fas fa-moon dark:hidden"></i>
+                    <i class="fas fa-sun hidden dark:inline"></i>
+                </button>
+
+                <!-- Divider -->
+                <div class="w-px h-6 bg-gray-200 dark:bg-gray-700 mx-1"></div>
+
+                <!-- Admin Button -->
+                <button id="adminBtn"
+                    class="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-forest-500 relative">
+                    <i class="fas fa-user-shield"></i>
+                    <span id="adminStatus"
+                        class="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white dark:border-gray-800"></span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Mobile Settings Toggle -->
+        <button id="mobileSettingsBtn"
+            class="md:hidden pointer-events-auto bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 p-3 rounded-full shadow-lg focus:outline-none focus:ring-2 focus:ring-forest-500">
+            <i class="fas fa-sliders-h"></i>
+        </button>
+    </div>
+
+
+    <!-- Control Panel / Drawer -->
+    <!-- Control Panel / Drawer -->
+    <div id="controlPanel"
+        class="fixed z-[2000] transition-transform duration-300 ease-in-out
+               bottom-0 left-0 right-0 h-[85vh] translate-y-full bg-transparent shadow-none pointer-events-none
+               md:top-4 md:right-4 md:bottom-auto md:left-auto md:w-96 md:h-auto md:max-h-[calc(100vh-2rem)] md:translate-y-0 md:bg-transparent md:pointer-events-auto">
+
+        <!-- Inner Container -->
+        <div
+            class="flex flex-col h-full md:h-auto md:max-h-[calc(100vh-2rem)] pointer-events-auto shadow-2xl md:shadow-none">
+            <!-- Mobile Handle / Header -->
+            <div class="md:hidden flex justify-center pt-2 pb-1 bg-white dark:bg-gray-800 rounded-t-2xl border-b border-gray-100 dark:border-gray-700 cursor-pointer w-full"
+                id="drawerHandle">
+                <div class="w-12 h-1.5 bg-gray-300 dark:bg-gray-600 rounded-full"></div>
+            </div>
+
+            <div
+                class="bg-white dark:bg-gray-800 md:rounded-lg shadow-xl md:shadow-2xl border-t md:border border-gray-200 dark:border-gray-700 flex flex-col h-full md:h-auto md:max-h-[calc(100vh-2rem)] md:min-h-0 w-full">
+
+                <!-- Header -->
+                <div
+                    class="bg-gradient-to-r from-forest-600 to-forest-700 dark:from-forest-500 dark:to-forest-600 text-white p-4 md:rounded-t-lg flex justify-between items-center shrink-0">
+                    <div>
+                        <h1 class="text-xl font-bold flex items-center gap-2">
+                            <i class="fas fa-tree"></i>
+                            <span class="md:inline" data-i18n="panelTitle">Фитонциды ели</span>
+                        </h1>
+                        <p class="text-sm text-forest-100/90 mt-1 hidden md:block" data-i18n="panelSubtitle">
+                            Интерактивная
+                            карта распространения</p>
+                    </div>
+                    <!-- Close Button (Mobile) -->
+                    <button id="closePanelBtn"
+                        class="md:hidden p-2 text-white hover:bg-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/50">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+
+                <!-- Mobile Tabs (Optional for better UX on small screens, keeping simple for now) -->
+
+                <!-- Controls Container (Scrollable) -->
+                <div class="p-4 space-y-4 dark:bg-gray-800 overflow-y-auto flex-1 overscroll-contain md:max-h-[calc(100vh-12rem)]"
+                    style="-webkit-overflow-scrolling: touch;">
+
+
+                    <!-- Tab Navigation -->
+                    <div class="grid grid-cols-4 gap-1 p-1 bg-gray-100 dark:bg-gray-700/50 rounded-lg mb-4">
+                        <button id="tabTree"
+                            class="tab-btn active px-2 py-2 rounded-md text-sm font-semibold flex flex-col items-center gap-1 transition-all bg-white dark:bg-gray-600 text-forest-700 dark:text-forest-400 shadow-sm"
+                            data-tab="tree">
+                            <i class="fas fa-tree text-lg"></i>
+                            <span class="text-[10px]" data-i18n="tabTree">Деревья</span>
+                        </button>
+                        <button id="tabWater"
+                            class="tab-btn px-2 py-2 rounded-md text-sm font-semibold flex flex-col items-center gap-1 transition-all text-gray-500 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-gray-600/50"
+                            data-tab="water">
+                            <i class="fas fa-water text-lg text-blue-500"></i>
+                            <span class="text-[10px]" data-i18n="tabWater">Вода</span>
+                        </button>
+                        <button id="tabElectricity"
+                            class="tab-btn px-2 py-2 rounded-md text-sm font-semibold flex flex-col items-center gap-1 transition-all text-gray-500 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-gray-600/50"
+                            data-tab="electricity">
+                            <i class="fas fa-bolt text-lg text-yellow-500"></i>
+                            <span class="text-[10px]" data-i18n="tabElectricity">Электро</span>
+                        </button>
+                        <button id="tabRedZone"
+                            class="tab-btn px-2 py-2 rounded-md text-sm font-semibold flex flex-col items-center gap-1 transition-all text-gray-500 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-gray-600/50"
+                            data-tab="red_zone">
+                            <i class="fas fa-ban text-lg text-red-500"></i>
+                            <span class="text-[10px]" data-i18n="tabRedZone">Зона</span>
+                        </button>
+                    </div>
+
+                    <!-- Hidden Select for compatibility with existing JS -->
+                    <select id="activeTool" class="hidden">
+                        <option value="tree" selected>Tree</option>
+                        <option value="water">Water</option>
+                        <option value="electricity">Electricity</option>
+                        <option value="red_zone">Red Zone</option>
+                    </select>
+
+                    <!-- Contextual Controls: TREE -->
+                    <div id="treeControls" class="space-y-4">
+                        <!-- Work Mode (Specific to Trees) -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">
+                                <i class="fas fa-cog text-forest-600 dark:text-forest-400"></i> <span
+                                    data-i18n="placementMethod">Метод размещения</span>
+                            </label>
+                            <select id="workMode"
+                                class="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 dark:text-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-forest-500 focus:border-transparent">
+                                <option value="polygon" data-i18n="workModePolygon">Рисование области (Авто)</option>
+                                <option value="manual" data-i18n="workModeManual">Ручное размещение (Клик)</option>
+                            </select>
+                        </div>
+
+                        <!-- Instructions -->
+                        <div id="instructionBox"
+                            class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-lg p-3 text-sm">
+                            <div class="flex items-start gap-2">
+                                <i class="fas fa-info-circle text-blue-600 dark:text-blue-400 mt-0.5"></i>
+                                <div class="text-blue-900 dark:text-blue-200">
+                                    <strong data-i18n="instructionBoxTitle">Инструкция:</strong> <span
+                                        id="instructionText" data-i18n="instructionBoxText">Нажмите <i
+                                            class="fas fa-draw-polygon text-xs"></i>
+                                        на карте, затем кликайте для создания
+                                        полигона лесной области. Двойной клик завершает рисование.</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Map Layer Selection -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                <i class="fas fa-layer-group text-forest-600"></i> <span data-i18n="mapLayer">Слой
+                                    карты</span>
+                            </label>
+                            <select id="mapLayer"
+                                class="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 dark:text-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-forest-500 focus:border-transparent">
+                                <option value="osm" data-i18n="mapLayerOsm">Стандартная карта</option>
+                                <option value="satellite" selected="" data-i18n="mapLayerSatellite">Спутниковая (для
+                                    определения лесов)</option>
+                            </select>
+                        </div>
+
+                        <!-- Section Divider -->
+                        <div class="border-t border-gray-300 my-2"></div>
+                        <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2"
+                            data-i18n="treeSection">
+                            Параметры деревьев</div>
+
+                        <!-- Tree Density -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                <i class="fas fa-seedling text-forest-600"></i> <span data-i18n="treeDensity">Плотность
+                                    деревьев</span>
+                            </label>
+                            <input type="range" id="treeDensity" min="5" max="50" value="20"
+                                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-forest-600" />
+                            <div class="flex justify-between text-xs text-gray-600 mt-1">
+                                <span data-i18n="densityRare">Редко (5/га)</span>
+                                <span id="treeDensityValue"
+                                    class="font-semibold text-forest-700 dark:text-forest-400">20/га</span>
+                                <span data-i18n="densityDense">Густо (50/га)</span>
+                            </div>
+                        </div>
+
+                        <!-- Section Divider -->
+                        <div class="border-t border-gray-300 my-2"></div>
+                        <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2"
+                            data-i18n="environmentSection">Окружающая среда</div>
+
+                        <!-- Season -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                <i class="fas fa-calendar text-forest-600"></i> <span data-i18n="season">Сезон</span>
+                            </label>
+                            <select id="season"
+                                class="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 dark:text-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-forest-500 focus:border-transparent">
+                                <option value="spring" data-i18n="seasonSpring">Весна (↑ активность)</option>
+                                <option value="summer" selected="" data-i18n="seasonSummer">Лето (максимум)</option>
+                                <option value="autumn" data-i18n="seasonAutumn">Осень (↓ активность)</option>
+                                <option value="winter" data-i18n="seasonWinter">Зима (минимум)</option>
+                            </select>
+                        </div>
+
+                        <!-- Time of Day -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                <i class="fas fa-clock text-forest-600"></i> <span data-i18n="timeOfDay">Время
+                                    суток</span>
+                            </label>
+                            <select id="timeOfDay"
+                                class="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 dark:text-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-forest-500 focus:border-transparent">
+                                <option value="morning" data-i18n="timeMorning">Утро (6:00-12:00)</option>
+                                <option value="day" selected="" data-i18n="timeDay">День (12:00-18:00)</option>
+                                <option value="evening" data-i18n="timeEvening">Вечер (18:00-22:00)</option>
+                                <option value="night" data-i18n="timeNight">Ночь (22:00-6:00)</option>
+                            </select>
+                        </div>
+
+                        <!-- Weather -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                <i class="fas fa-cloud-sun text-forest-600"></i> <span data-i18n="weather">Погода</span>
+                            </label>
+                            <select id="weather"
+                                class="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 dark:text-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-forest-500 focus:border-transparent">
+                                <option value="sunny" selected="" data-i18n="weatherSunny">Солнечно (↑ выделение)
+                                </option>
+                                <option value="cloudy" data-i18n="weatherCloudy">Облачно (норма)</option>
+                                <option value="rainy" data-i18n="weatherRainy">Дождь (↓ выделение)</option>
+                                <option value="foggy" data-i18n="weatherFoggy">Туман (плохое рассеивание)</option>
+                            </select>
+                        </div>
+
+                        <!-- Section Divider -->
+                        <div class="border-t border-gray-300 my-2"></div>
+                        <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2"
+                            data-i18n="windSection">
+                            Параметры ветра</div>
+
+                        <!-- Wind Speed -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                <i class="fas fa-wind text-forest-600"></i> <span data-i18n="windSpeed">Скорость
+                                    ветра</span>
+                            </label>
+                            <input type="range" id="windSpeed" min="0" max="10" value="3" step="0.5"
+                                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-forest-600" />
+                            <div class="flex justify-between text-xs text-gray-600 mt-1">
+                                <span data-i18n="windCalm">Штиль</span>
+                                <span id="windSpeedValue" class="font-semibold text-forest-700 dark:text-forest-400">3
+                                    м/с</span>
+                                <span data-i18n="windStrong">Сильный</span>
+                            </div>
+                        </div>
+
+                        <!-- Wind Direction -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                <i class="fas fa-compass text-forest-600"></i> <span
+                                    data-i18n="windDirection">Направление
+                                    ветра</span>
+                            </label>
+                            <input type="range" id="windDirection" min="0" max="360" value="90" step="15"
+                                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-forest-600" />
+                            <div class="flex justify-between text-xs text-gray-600 mt-1">
+                                <span data-i18n="windNorth">С (0°)</span>
+                                <span id="windDirectionValue"
+                                    class="font-semibold text-forest-700 dark:text-forest-400">В
+                                    (90°)</span>
+                                <span data-i18n="windSouth">Ю (180°)</span>
+                            </div>
+                        </div>
+
+                        <!-- Section Divider -->
+                        <div class="border-t border-gray-300 my-2"></div>
+                        <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2"
+                            data-i18n="phytoSection">
+                            Параметры фитонцидов</div>
+
+                        <!-- Base Radius -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                <i class="fas fa-arrows-alt text-forest-600"></i> <span data-i18n="baseRadius">Базовый
+                                    радиус действия</span>
+                            </label>
+                            <input type="range" id="baseRadius" min="20" max="100" value="50" step="5"
+                                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-forest-600" />
+                            <div class="flex justify-between text-xs text-gray-600 mt-1">
+                                <span>20 м</span>
+                                <span id="baseRadiusValue" class="font-semibold text-forest-700 dark:text-forest-400">50
+                                    м</span>
+                                <span>100 м</span>
+                            </div>
+                        </div>
+
+                        <!-- Array Synergy -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                <i class="fas fa-layer-group text-forest-600"></i> <span data-i18n="arrayEffect">Эффект
+                                    массива</span>
+                            </label>
+                            <input type="range" id="arraySynergy" min="100" max="200" value="150" step="10"
+                                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-forest-600" />
+                            <div class="flex justify-between text-xs text-gray-600 mt-1">
+                                <span data-i18n="effectWeak">Слабый</span>
+                                <span id="arraySynergyValue"
+                                    class="font-semibold text-forest-700 dark:text-forest-400">150%</span>
+                                <span data-i18n="effectStrong">Сильный</span>
+                            </div>
+                            <p class="text-xs text-gray-600 mt-1" data-i18n="arrayEffectDesc">Усиление при перекрытии
+                                зон
+                                деревьев</p>
+                        </div>
+
+                        <!-- Section Divider -->
+                        <div class="border-t border-gray-300 my-2"></div>
+                        <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2"
+                            data-i18n="visualSection">
+                            Визуализация</div>
+
+                        <!-- Layer Opacity Control -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                <i class="fas fa-adjust text-forest-600"></i> <span
+                                    data-i18n="layerOpacity">Прозрачность
+                                    слоя</span>
+                            </label>
+                            <input type="range" id="layerOpacity" min="0" max="100" value="30" step="5"
+                                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-forest-600" />
+                            <div class="flex justify-between text-xs text-gray-600 mt-1">
+                                <span data-i18n="opacityTransparent">Прозрачный</span>
+                                <span id="layerOpacityValue"
+                                    class="font-semibold text-forest-700 dark:text-forest-400">30%</span>
+                                <span data-i18n="opacityOpaque">Непрозрачный</span>
+                            </div>
+                            <p class="text-xs text-gray-600 mt-1" data-i18n="opacityDesc">Видимость зеленого слоя
+                                фитонцидов
+                            </p>
+                        </div>
+
+                        <!-- Particle Animation Toggle -->
+                        <div>
+                            <label class="flex items-center justify-between">
+                                <span class="text-sm font-semibold text-gray-700" data-i18n="particles">
+                                    <i class="fas fa-atom text-forest-600"></i> Анимация частиц
+                                </span>
+                                <input type="checkbox" id="particleToggle" checked=""
+                                    class="w-5 h-5 text-forest-600 rounded focus:ring-2 focus:ring-forest-500" />
+                            </label>
+                            <p class="text-xs text-gray-600 mt-1" data-i18n="particlesDesc">Показывать движение и
+                                испарение
+                                фитонцидов</p>
+                        </div>
+
+                    </div> <!-- End of #treeControls -->
+
+                    <!-- Contextual Controls: LINES (Water/Electricity) -->
+                    <div id="lineControls" class="hidden space-y-4">
+                        <div
+                            class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-lg p-3 text-sm">
+                            <div class="flex items-start gap-2">
+                                <i class="fas fa-info-circle text-blue-600 dark:text-blue-400 mt-0.5"></i>
+                                <div class="text-blue-900 dark:text-blue-200">
+                                    <strong data-i18n="lineInstructionTitle">Режим рисования линий:</strong> <span
+                                        data-i18n="lineInstructionText">Используйте инструмент рисования (Polyline)
+                                        слева на карте, чтобы проложить маршрут. Двойной клик для завершения.</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Water Opacity Control -->
+                        <div id="waterOpacityContainer" class="hidden">
+                            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">
+                                <i class="fas fa-tint text-blue-500"></i> <span data-i18n="waterOpacity">Прозрачность
+                                    воды</span>
+                            </label>
+                            <input type="range" id="waterOpacity" min="0" max="100" value="100" step="5"
+                                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                            <div class="flex justify-between text-xs text-gray-600 dark:text-gray-400 mt-1">
+                                <span data-i18n="opacityTransparent">0%</span>
+                                <span id="waterOpacityValue"
+                                    class="font-semibold text-blue-600 dark:text-blue-400">100%</span>
+                                <span data-i18n="opacityOpaque">100%</span>
+                            </div>
+                        </div>
+
+                        <!-- Electricity Opacity Control -->
+                        <div id="electricityOpacityContainer" class="hidden">
+                            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">
+                                <i class="fas fa-bolt text-yellow-500"></i> <span
+                                    data-i18n="electricityOpacity">Прозрачность электричества</span>
+                            </label>
+                            <input type="range" id="electricityOpacity" min="0" max="100" value="100" step="5"
+                                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-yellow-500" />
+                            <div class="flex justify-between text-xs text-gray-600 dark:text-gray-400 mt-1">
+                                <span data-i18n="opacityTransparent">0%</span>
+                                <span id="electricityOpacityValue"
+                                    class="font-semibold text-yellow-600 dark:text-yellow-400">100%</span>
+                                <span data-i18n="opacityOpaque">100%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Contextual Controls: RED ZONE -->
+                    <div id="zoneControls" class="hidden space-y-4">
+                        <div
+                            class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-lg p-3 text-sm">
+                            <div class="flex items-start gap-2">
+                                <i class="fas fa-info-circle text-red-600 dark:text-red-400 mt-0.5"></i>
+                                <div class="text-red-900 dark:text-red-200">
+                                    <strong data-i18n="zoneInstructionTitle">Режим опасных зон:</strong> <span
+                                        data-i18n="zoneInstructionText">Используйте инструмент (Polygon) слева, чтобы
+                                        выделить область, требующую внимания.</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Red Zone Opacity Control -->
+                        <div id="redZoneOpacityContainer" class="hidden">
+                            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">
+                                <i class="fas fa-exclamation-triangle text-red-500"></i> <span
+                                    data-i18n="redZoneOpacity">Прозрачность зоны</span>
+                            </label>
+                            <input type="range" id="redZoneOpacity" min="0" max="100" value="30" step="5"
+                                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-red-500" />
+                            <div class="flex justify-between text-xs text-gray-600 dark:text-gray-400 mt-1">
+                                <span data-i18n="opacityTransparent">0%</span>
+                                <span id="redZoneOpacityValue"
+                                    class="font-semibold text-red-600 dark:text-red-400">30%</span>
+                                <span data-i18n="opacityOpaque">100%</span>
+                            </div>
+                        </div>
+                    </div>
+
+
+
+                    <!-- Action Buttons -->
+                    <div class="flex gap-2">
+                        <button id="clearBtn"
+                            class="flex-1 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2">
+                            <i class="fas fa-eraser"></i>
+                            <span data-i18n="btnClear">Очистить карту</span>
+                        </button>
+                        <button id="updateBtn"
+                            class="flex-1 bg-forest-600 hover:bg-forest-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2">
+                            <i class="fas fa-sync"></i>
+                            <span data-i18n="btnUpdate">Обновить</span>
+                        </button>
+                    </div>
+
+                    <!-- Persistence Buttons -->
+                    <div class="flex flex-col gap-2">
+                        <div class="grid grid-cols-2 gap-2">
+                            <button id="saveBtn"
+                                class="bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-3 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-2">
+                                <i class="fas fa-hdd"></i>
+                                <span data-i18n="btnSave">Локально</span>
+                            </button>
+                            <button id="deleteBtn"
+                                class="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-800/30 hover:bg-red-100 dark:hover:bg-red-900/40 px-3 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-2">
+                                <i class="fas fa-trash-alt"></i>
+                                <span data-i18n="btnDelete">Удалить</span>
+                            </button>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <button id="saveCloudBtn"
+                                class="bg-forest-600 hover:bg-forest-700 text-white px-3 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-2">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <span data-i18n="btnSaveCloud">В облако</span>
+                            </button>
+                            <button id="loadCloudBtn"
+                                class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-2">
+                                <i class="fas fa-cloud-download-alt"></i>
+                                <span data-i18n="btnLoadCloud">Из облака</span>
+                            </button>
+                        </div>
+                    </div>
+
+
+                    <!-- Statistics -->
+                    <div id="stats" class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 space-y-2 hidden">
+                        <h3 class="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-2">
+                            <i class="fas fa-chart-bar text-forest-600 dark:text-forest-400"></i> <span
+                                data-i18n="statsTitle">Статистика</span>
+                        </h3>
+                        <div class="grid grid-cols-2 gap-2 text-xs">
+                            <div class="bg-white dark:bg-gray-800 p-2 rounded">
+                                <div class="text-gray-600 dark:text-gray-400" data-i18n="statArea">Площадь</div>
+                                <div id="areaValue" class="font-bold text-forest-700 dark:text-forest-400">-</div>
+                            </div>
+                            <div class="bg-white dark:bg-gray-800 p-2 rounded">
+                                <div class="text-gray-600 dark:text-gray-400" data-i18n="statTrees">Деревьев</div>
+                                <div id="treesValue" class="font-bold text-forest-700 dark:text-forest-400">-</div>
+                            </div>
+                            <div class="bg-white dark:bg-gray-800 p-2 rounded">
+                                <div class="text-gray-600 dark:text-gray-400" data-i18n="statRadius">Макс. радиус</div>
+                                <div id="maxRadiusValue" class="font-bold text-forest-700 dark:text-forest-400">-</div>
+                            </div>
+                            <div class="bg-white dark:bg-gray-800 p-2 rounded">
+                                <div class="text-gray-600 dark:text-gray-400" data-i18n="statMultiplier">Множитель</div>
+                                <div id="multiplierValue" class="font-bold text-forest-700 dark:text-forest-400">-</div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <!-- Legend -->
+                    <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+                        <h3 class="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-2">
+                            <i class="fas fa-palette text-forest-600 dark:text-forest-400"></i> <span
+                                data-i18n="legendTitle">Легенда</span>
+                        </h3>
+                        <div class="space-y-2">
+                            <div class="flex items-center gap-2 text-xs">
+                                <div
+                                    class="w-4 h-4 rounded-full bg-forest-700 border-2 border-white dark:border-gray-600">
+                                </div>
+                                <span class="text-gray-700 dark:text-gray-300" data-i18n="legendSpruce">Ель
+                                    (дерево)</span>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-700 dark:text-gray-300 mb-1"
+                                    data-i18n="legendConcentration">Концентрация
+                                    фитонцидов:</div>
+                                <div
+                                    class="gradient-bar h-6 rounded flex items-center justify-between px-2 text-[10px] text-white font-semibold">
+                                    <span class="drop-shadow" data-i18n="legendLow">Низкая</span>
+                                    <span class="drop-shadow" data-i18n="legendHigh">Высокая</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toastContainer" class="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Admin Login Modal -->
+    <div id="adminModal"
+        class="fixed inset-0 z-[10000] hidden bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div
+            class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden transform transition-all">
+            <div class="bg-forest-600 p-4 text-white flex justify-between items-center">
+                <h3 class="text-lg font-bold flex items-center gap-2">
+                    <i class="fas fa-lock"></i>
+                    <span data-i18n="adminLoginTitle">Вход для администратора</span>
+                </h3>
+                <button id="closeAdminModal" class="hover:bg-white/20 p-2 rounded-lg"><i
+                        class="fas fa-times"></i></button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2"
+                        data-i18n="adminPasswordLabel">Пароль</label>
+                    <input type="password" id="adminPassword"
+                        class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-4 py-2 focus:ring-2 focus:ring-forest-500 outline-none dark:text-white"
+                        placeholder="••••••••" />
+                </div>
+                <button id="loginBtn"
+                    class="w-full bg-forest-600 hover:bg-forest-700 text-white font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2">
+                    <i class="fas fa-sign-in-alt"></i>
+                    <span data-i18n="btnLogin">Войти</span>
+                </button>
+                <p id="adminError" class="text-red-500 text-xs text-center hidden" data-i18n="adminError">Неверный
+                    пароль</p>
+            </div>
+        </div>
+    </div>
+
+
+
+    <!-- Particle Animation Canvas -->
+    <canvas id="particleCanvas"></canvas>
+
+    <!-- Attribution -->
+    <div
+        class="absolute bottom-4 left-4 z-[1000] bg-white/90 backdrop-blur-sm px-3 py-2 rounded-lg shadow-lg text-xs text-gray-600">
+        <i class="fas fa-leaf text-forest-600"></i> <span data-i18n="attribution">Научные данные основаны на
+            исследованиях фитонцидной активности
+            хвойных</span>
+    </div>
+
+    <script>
+        // Supabase Initialization
+        const SUPABASE_URL = 'https://qurlchmkzoavrvdenmxx.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_bdKXqlEpqwwblwg4vpakmQ_3FiED3xw';
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const PROJECT_ID = 'default-project';
+
+        const PROJECT_STORAGE_KEY = 'ecowatch_map_project';
+        let isSyncing = false;
+        let isAdmin = localStorage.getItem('isAdmin') === 'true'; // Restore session
+
+        // Tracking Deleted IDs for Incremental Sync
+        let deletedTreeIds = new Set();
+        let deletedPolygonIds = new Set();
+        let deletedWaterLineIds = new Set();
+        let deletedElectricityLineIds = new Set();
+        let deletedRedZoneIds = new Set();
+
+        // Utility to generate short IDs
+        function generateShortId() {
+            return crypto.randomUUID().split('-')[0];
+        }
+
+        // Initialize map centered on Zyryanovsk, Kazakhstan
+        const map = L.map('map').setView([49.7447, 84.2697], 13);
+
+        // Base layers
+        const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
+        });
+
+        const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles © Esri',
+            maxZoom: 19
+        });
+
+        // Add default layer
+        satelliteLayer.addTo(map);
+
+
+
+        // Feature group for drawn items
+        const drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+
+        // Drawing control
+        // Drawing Control is now initialized dynamically in updateMapInteraction()
+
+        // Store trees and phytoncide circles
+        let trees = [];
+        let water = [];
+        let electricity = [];
+        let redZones = [];
+        let waterLines = [];
+        let electricityLines = [];
+        let phytoncideCircles = [];
+        let currentPolygon = null;
+
+        // Get DOM elements
+        const treeDensitySlider = document.getElementById('treeDensity');
+        const treeDensityValue = document.getElementById('treeDensityValue');
+        const seasonSelect = document.getElementById('season');
+        const timeOfDaySelect = document.getElementById('timeOfDay');
+        const weatherSelect = document.getElementById('weather');
+        const windSpeedSlider = document.getElementById('windSpeed');
+        const windSpeedValue = document.getElementById('windSpeedValue');
+        const baseRadiusSlider = document.getElementById('baseRadius');
+        const baseRadiusValue = document.getElementById('baseRadiusValue');
+        const arraySynergySlider = document.getElementById('arraySynergy');
+        const arraySynergyValue = document.getElementById('arraySynergyValue');
+        const clearBtn = document.getElementById('clearBtn');
+        const updateBtn = document.getElementById('updateBtn');
+        const stats = document.getElementById('stats');
+        const workModeSelect = document.getElementById('workMode');
+        const activeToolSelect = document.getElementById('activeTool');
+        // const activeToolContainer = document.getElementById('activeToolContainer'); // Removed as part of UI Refactor
+        const instructionText = document.getElementById('instructionText');
+        const mapLayerSelect = document.getElementById('mapLayer');
+        const windDirectionSlider = document.getElementById('windDirection');
+        const windDirectionValue = document.getElementById('windDirectionValue');
+        const particleToggle = document.getElementById('particleToggle');
+        const saveBtn = document.getElementById('saveBtn');
+        const deleteBtn = document.getElementById('deleteBtn');
+        const saveCloudBtn = document.getElementById('saveCloudBtn');
+        const loadCloudBtn = document.getElementById('loadCloudBtn');
+        const layerOpacitySlider = document.getElementById('layerOpacity');
+        const layerOpacityValue = document.getElementById('layerOpacityValue');
+        const waterOpacitySlider = document.getElementById('waterOpacity');
+        const waterOpacityValue = document.getElementById('waterOpacityValue');
+        const waterOpacityContainer = document.getElementById('waterOpacityContainer');
+
+        // Admin DOM Elements
+        const adminBtn = document.getElementById('adminBtn');
+        const adminStatus = document.getElementById('adminStatus');
+
+        // Set initial admin status color
+        if (isAdmin) {
+            adminStatus.classList.replace('bg-red-500', 'bg-green-500');
+        }
+        const adminModal = document.getElementById('adminModal');
+        const adminPasswordInput = document.getElementById('adminPassword');
+        const loginBtn = document.getElementById('loginBtn');
+        const closeAdminModal = document.getElementById('closeAdminModal');
+        const adminError = document.getElementById('adminError');
+
+        // Electricity Opacity Elements
+        const electricityOpacitySlider = document.getElementById('electricityOpacity');
+        const electricityOpacityValue = document.getElementById('electricityOpacityValue');
+        const electricityOpacityContainer = document.getElementById('electricityOpacityContainer');
+
+        // Red Zone Opacity Elements
+        const redZoneOpacitySlider = document.getElementById('redZoneOpacity');
+        const redZoneOpacityValue = document.getElementById('redZoneOpacityValue');
+        const redZoneOpacityContainer = document.getElementById('redZoneOpacityContainer');
+
+
+        // Setup canvases early so they can be used in event handlers
+        const particleCanvas = document.getElementById('particleCanvas');
+        const ctx = particleCanvas.getContext('2d');
+
+        let manualMode = false;
+        let isParticleAnimationEnabled = true;
+        let layerOpacityMultiplier = 0.3; // Default 30%
+        let waterOpacityMultiplier = 1.0; // Default 100%
+        let electricityOpacityMultiplier = 1.0; // Default 100%
+        let redZoneOpacityMultiplier = 0.3; // Default 30%
+        let particles = [];
+
+        // Resize canvases to match map
+        // Resize canvases to match map
+        function resizeCanvas() {
+            particleCanvas.width = map.getContainer().offsetWidth;
+            particleCanvas.height = map.getContainer().offsetHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        // map.on('move', resizeCanvas); // REMOVED: Expensive operation causing jitter
+
+        // Debounce function to limit rate of execution
+        function debounce(func, wait) {
+            let timeout;
+            return function (...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
+        }
+
+        // Throttle function using requestAnimationFrame
+        function throttle(func) {
+            let running = false;
+            return function (...args) {
+                if (!running) {
+                    running = true;
+                    requestAnimationFrame(() => {
+                        func.apply(this, args);
+                        running = false;
+                    });
+                }
+            };
+        }
+
+        // Update slider displays
+        // Update slider displays immediately, but delay heavy calculations
+        treeDensitySlider.addEventListener('input', (e) => {
+            treeDensityValue.textContent = e.target.value + '/га';
+        });
+
+        // Debounced tree generation (heavy operation)
+        const debouncedGenerateTrees = debounce(() => {
+            if (currentPolygon && trees.length > 0) {
+                generateTrees(currentPolygon);
+            }
+        }, 300);
+
+        treeDensitySlider.addEventListener('input', debouncedGenerateTrees);
+
+        windSpeedSlider.addEventListener('input', (e) => {
+            windSpeedValue.textContent = e.target.value + ' м/с';
+        });
+
+        baseRadiusSlider.addEventListener('input', (e) => {
+            baseRadiusValue.textContent = e.target.value + ' м';
+        });
+
+        arraySynergySlider.addEventListener('input', (e) => {
+            arraySynergyValue.textContent = e.target.value + '%';
+        });
+
+        windDirectionSlider.addEventListener('input', (e) => {
+            const degrees = parseInt(e.target.value);
+            const currentLang = localStorage.getItem('language') || 'ru';
+            const t = translations[currentLang] || translations.ru;
+
+            const directions = {
+                0: t.windNorth || 'С',
+                45: t.windNorthEast || 'СВ',
+                90: t.windEast || 'В',
+                135: t.windSouthEast || 'ЮВ',
+                180: t.windSouth || 'Ю',
+                225: t.windSouthWest || 'ЮЗ',
+                270: t.windWest || 'З',
+                315: t.windNorthWest || 'СЗ'
+            };
+            const nearest = Math.round(degrees / 45) * 45;
+            const dirLabel = directions[nearest % 360] || (t.windNorth || 'С');
+            windDirectionValue.textContent = `${dirLabel} (${degrees}°)`;
+        });
+
+        // Layer opacity control
+        // Layer opacity control
+        layerOpacitySlider.addEventListener('input', (e) => {
+            layerOpacityMultiplier = parseInt(e.target.value) / 100;
+            layerOpacityValue.textContent = e.target.value + '%';
+            if (trees.length > 0) {
+                // Use throttle for visual updates
+                if (!window.updatePhytoncideThrottle) {
+                    window.updatePhytoncideThrottle = throttle(() => updatePhytoncideVisualization());
+                }
+                window.updatePhytoncideThrottle();
+            }
+        });
+
+        // Admin Panel Logic
+        adminBtn.addEventListener('click', () => {
+            if (isAdmin) {
+                isAdmin = false;
+                localStorage.removeItem('isAdmin'); // Clear session
+                adminStatus.classList.replace('bg-green-500', 'bg-red-500');
+                showToast('Вы вышли из режима администратора', 'info');
+            } else {
+                adminModal.classList.remove('hidden');
+            }
+        });
+
+        closeAdminModal.addEventListener('click', () => {
+            adminModal.classList.add('hidden');
+            adminError.classList.add('hidden');
+            adminPasswordInput.value = '';
+        });
+
+        loginBtn.addEventListener('click', () => {
+            const pass = adminPasswordInput.value;
+            if (pass === 'admin') {
+                isAdmin = true;
+                localStorage.setItem('isAdmin', 'true'); // Save session
+                adminModal.classList.add('hidden');
+                adminError.classList.add('hidden');
+                adminPasswordInput.value = '';
+                adminStatus.classList.replace('bg-red-500', 'bg-green-500');
+                showToast('Доступ разрешен: Режим администратора', 'success');
+            } else {
+                adminError.classList.remove('hidden');
+            }
+        });
+
+        // Trigger login on Enter key
+        adminPasswordInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') loginBtn.click();
+        });
+
+        // Electricity Opacity Control
+        electricityOpacitySlider.addEventListener('input', (e) => {
+            const val = parseInt(e.target.value);
+            electricityOpacityMultiplier = val / 100;
+            electricityOpacityValue.textContent = val + '%';
+
+            // Update existing electricity lines
+            electricityLines.forEach(line => {
+                line.layer.setStyle({ opacity: electricityOpacityMultiplier });
+            });
+
+            // Re-create draw control if currently in electricity mode
+            if (activeToolSelect.value === 'electricity') updateMapInteraction('electricity');
+        });
+
+        // Red Zone Opacity Control
+        redZoneOpacitySlider.addEventListener('input', (e) => {
+            const val = parseInt(e.target.value);
+            redZoneOpacityMultiplier = val / 100;
+            redZoneOpacityValue.textContent = val + '%';
+
+            // Update existing red zones
+            redZones.forEach(rz => {
+                rz.layer.setStyle({ fillOpacity: redZoneOpacityMultiplier });
+            });
+
+            // Re-create draw control if currently in red zone mode
+            if (activeToolSelect.value === 'red_zone') updateMapInteraction('red_zone');
+        });
+
+
+
+
+        // Work mode change (Updated for Tab System - Only affects Tree Tab)
+        // Listener is now handled in the Tab Logic section at the bottom
+
+        // Function to update instruction text based on mode and language
+        function updateInstructionText() {
+            const currentLang = localStorage.getItem('language') || 'ru';
+            const t = translations[currentLang] || translations.ru;
+
+            if (manualMode) {
+                instructionText.innerHTML = t.instructionManual || 'Кликайте по карте для размещения деревьев. Используйте спутниковый слой для определения реальных лесных массивов.';
+            } else {
+                instructionText.innerHTML = (t.instructionPolygon || 'Нажмите на карте, затем кликайте для создания полигона лесной области. Двойной клик завершает рисование.').replace('<i class="fas fa-draw-polygon text-xs"></i>', '').trim();
+                // If the translation doesn't include the icon, we might want to add it back if we want it there
+                instructionText.innerHTML = (t.instructionBoxTitle || 'Инструкция:') + ' ' + (t.instructionBoxText || 'Нажмите на карту...');
+            }
+        }
+
+        // Map layer change
+        mapLayerSelect.addEventListener('change', (e) => {
+            if (e.target.value === 'satellite') {
+                map.removeLayer(osmLayer);
+                map.addLayer(satelliteLayer);
+            } else {
+                map.removeLayer(satelliteLayer);
+                map.addLayer(osmLayer);
+            }
+        });
+
+        // Particle animation toggle
+        particleToggle.addEventListener('change', (e) => {
+            isParticleAnimationEnabled = e.target.checked;
+            if (!isParticleAnimationEnabled) {
+                particles = [];
+            }
+        });
+
+        // Manual object placement (Trees, Water, Electricity)
+        function onMapClick(e) {
+            if (!manualMode) return;
+
+            const tool = activeToolSelect.value;
+
+            if (tool === 'tree') {
+                const treeMarker = L.circleMarker(e.latlng, {
+                    radius: 8,
+                    fillColor: '#2d5016',
+                    color: '#ffffff',
+                    weight: 3,
+                    opacity: 1,
+                    fillOpacity: 1,
+                    className: 'tree-marker'
+                }).addTo(map);
+
+                const treeObj = {
+                    marker: treeMarker,
+                    position: e.latlng,
+                    cloudId: null,
+                    mode: 'manual'
+                };
+
+                trees.push(treeObj);
+                addTreeDeletionPopup(treeObj);
+
+                updatePhytoncideVisualization();
+                updateManualStatistics();
+            }
+            // Water and Electricity are now Lines, handled by Draw Control
+        }
+
+        // Listen for tool change -> Now handled by Tab Logic
+        // activeToolSelect listener removed to avoid conflict
+
+        // Helper to add deletion popup to a tree
+        function addTreeDeletionPopup(treeObj) {
+            const popupContent = document.createElement('div');
+            popupContent.className = 'p-2';
+            popupContent.innerHTML = `
+                <div class="font-bold mb-1">Дерево (Ручное)</div>
+                <button class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-xs flex items-center gap-1 w-full justify-center delete-tree-btn">
+                    <i class="fas fa-trash"></i> Удалить
+                </button>
+            `;
+
+            const btn = popupContent.querySelector('.delete-tree-btn');
+            btn.addEventListener('click', () => {
+                if (treeObj.cloudId) {
+                    deletedTreeIds.add(String(treeObj.cloudId));
+                }
+                map.removeLayer(treeObj.marker);
+                trees = trees.filter(t => t !== treeObj);
+                updatePhytoncideVisualization();
+                updateTotalStatistics();
+            });
+
+            treeObj.marker.bindPopup(popupContent);
+        }
+
+        // Update statistics for manual mode
+        function updateManualStatistics() {
+            if (trees.length === 0) {
+                stats.classList.add('hidden');
+                return;
+            }
+
+            stats.classList.remove('hidden');
+            document.getElementById('areaValue').textContent = 'N/A';
+            document.getElementById('treesValue').textContent = trees.length;
+
+            const baseRadius = parseInt(baseRadiusSlider.value);
+            const envMultiplier = getEnvironmentalMultiplier();
+            const effectiveRadius = baseRadius * envMultiplier;
+
+            document.getElementById('maxRadiusValue').textContent = effectiveRadius.toFixed(0) + ' м';
+            document.getElementById('multiplierValue').textContent = envMultiplier.toFixed(2) + 'x';
+        }
+
+        // Calculate environmental multiplier
+        function getEnvironmentalMultiplier() {
+            let multiplier = 1.0;
+
+            // Season effect
+            const seasonEffects = {
+                spring: 1.2,
+                summer: 1.5,
+                autumn: 0.8,
+                winter: 0.3
+            };
+            multiplier *= seasonEffects[seasonSelect.value] || 1.0;
+
+            // Time of day effect
+            const timeEffects = {
+                morning: 1.1,
+                day: 1.3,
+                evening: 0.9,
+                night: 0.6
+            };
+            multiplier *= timeEffects[timeOfDaySelect.value] || 1.0;
+
+            // Weather effect
+            const weatherEffects = {
+                sunny: 1.3,
+                cloudy: 1.0,
+                rainy: 0.6,
+                foggy: 0.7
+            };
+            multiplier *= weatherEffects[weatherSelect.value] || 1.0;
+
+            // Wind effect (optimal around 2-4 m/s)
+            const windSpeed = parseFloat(windSpeedSlider.value);
+            if (windSpeed < 2) {
+                multiplier *= 0.7 + (windSpeed * 0.15); // 0.7 to 1.0
+            } else if (windSpeed <= 4) {
+                multiplier *= 1.0 + ((windSpeed - 2) * 0.1); // 1.0 to 1.2
+            } else {
+                multiplier *= 1.2 - ((windSpeed - 4) * 0.05); // 1.2 to 0.9
+            }
+
+            return multiplier;
+        }
+
+        // Generate random point inside polygon
+        function randomPointInPolygon(polygon) {
+            const bounds = polygon.getBounds();
+            let point;
+            let attempts = 0;
+
+            do {
+                const lat = bounds.getSouth() + Math.random() * (bounds.getNorth() - bounds.getSouth());
+                const lng = bounds.getWest() + Math.random() * (bounds.getEast() - bounds.getWest());
+                point = L.latLng(lat, lng);
+                attempts++;
+            } while (!isPointInPolygon(point, polygon) && attempts < 100);
+
+            return isPointInPolygon(point, polygon) ? point : null;
+        }
+
+        // Check if point is inside polygon
+        function isPointInPolygon(point, polygon) {
+            const latlngs = polygon.getLatLngs()[0];
+            let inside = false;
+
+            for (let i = 0, j = latlngs.length - 1; i < latlngs.length; j = i++) {
+                const xi = latlngs[i].lat, yi = latlngs[i].lng;
+                const xj = latlngs[j].lat, yj = latlngs[j].lng;
+
+                const intersect = ((yi > point.lng) !== (yj > point.lng))
+                    && (point.lat < (xj - xi) * (point.lng - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+
+            return inside;
+        }
+
+        // Calculate polygon area in hectares
+        function getPolygonArea(polygon) {
+            const latlngs = polygon.getLatLngs()[0];
+            let area = 0;
+
+            for (let i = 0; i < latlngs.length; i++) {
+                const j = (i + 1) % latlngs.length;
+                area += latlngs[i].lng * latlngs[j].lat;
+                area -= latlngs[j].lng * latlngs[i].lat;
+            }
+
+            area = Math.abs(area / 2);
+
+            // Convert to square meters (approximate)
+            const metersPerDegree = 111320;
+            const areaSqMeters = area * metersPerDegree * metersPerDegree;
+
+            // Convert to hectares
+            return areaSqMeters / 10000;
+        }
+
+        // Generate trees in polygon
+        function generateTrees(polygon, polygonId) {
+            // REMOVED: clearTrees(); - we now append trees
+            // REMOVED: currentPolygon = polygon; - we support multiple polygons
+
+            const area = getPolygonArea(polygon);
+            const density = parseInt(treeDensitySlider.value);
+            const numTrees = Math.round(area * density);
+
+            for (let i = 0; i < numTrees; i++) {
+                const point = randomPointInPolygon(polygon);
+                if (point) {
+                    const treeMarker = L.circleMarker(point, {
+                        radius: 8,
+                        fillColor: '#2d5016',
+                        color: '#ffffff',
+                        weight: 3,
+                        opacity: 1,
+                        fillOpacity: 1,
+                        className: 'tree-marker'
+                    }).addTo(map);
+
+                    trees.push({
+                        marker: treeMarker,
+                        position: point,
+                        cloudId: null,
+                        mode: 'polygon',
+                        polygonId: polygonId // Link tree to polygon
+                    });
+                }
+            }
+            updatePhytoncideVisualization();
+            updateTotalStatistics();
+        }
+
+        // Clear all trees, circles, particles, water, electricity, and red zones
+        function clearTrees() {
+            trees.forEach(tree => map.removeLayer(tree.marker));
+            trees = [];
+
+            water.forEach(w => map.removeLayer(w.marker));
+            water = [];
+
+            electricity.forEach(el => map.removeLayer(el.marker));
+            electricity = [];
+
+            redZones.forEach(rz => map.removeLayer(rz.layer));
+            redZones = [];
+
+            phytoncideCircles.forEach(circle => map.removeLayer(circle));
+            phytoncideCircles = [];
+            particles = []; // Clear particles when trees are removed
+        }
+
+        // Update phytoncide visualization
+        function updatePhytoncideVisualization() {
+            // Clear existing circles
+            phytoncideCircles.forEach(circle => map.removeLayer(circle));
+            phytoncideCircles = [];
+
+            if (trees.length === 0) return;
+
+            const baseRadius = parseInt(baseRadiusSlider.value);
+            const envMultiplier = getEnvironmentalMultiplier();
+            const arraySynergy = parseInt(arraySynergySlider.value) / 100;
+
+            // Create a concentration map
+            const concentrationMap = new Map();
+            const gridSize = 10; // meters
+
+            // Calculate concentration for each tree
+            trees.forEach(tree => {
+                const effectiveRadius = baseRadius * envMultiplier;
+
+                // Create multiple circles with decreasing opacity for gradient effect
+                const numRings = 8;
+                for (let i = numRings; i >= 1; i--) {
+                    const ringRadius = (effectiveRadius * i) / numRings;
+                    const concentration = (i / numRings);
+
+                    // Check for overlaps with other trees
+                    let overlapBonus = 1.0;
+                    trees.forEach(otherTree => {
+                        if (otherTree !== tree) {
+                            const distance = map.distance(tree.position, otherTree.position);
+                            if (distance < effectiveRadius * 2) {
+                                const overlapFactor = 1 - (distance / (effectiveRadius * 2));
+                                overlapBonus += overlapFactor * (arraySynergy - 1);
+                            }
+                        }
+                    });
+
+                    const finalConcentration = Math.min(concentration * overlapBonus, 1.0);
+                    // Прозрачность: 100% слайдера = ~20% реальной непрозрачности
+                    const baseOpacity = 0.004 + (finalConcentration * 0.012); // Уменьшено для видимости зданий
+                    const opacity = baseOpacity * layerOpacityMultiplier;
+
+                    const circle = L.circle(tree.position, {
+                        radius: ringRadius,
+                        fillColor: '#00FF00', // Яркий зеленый без темной тени
+                        color: 'transparent',
+                        fillOpacity: opacity,
+                        weight: 0
+                    }).addTo(map);
+
+                    phytoncideCircles.push(circle);
+                }
+            });
+        }
+
+        // Update statistics panel
+        function updateStatistics(area, numTrees) {
+            stats.classList.remove('hidden');
+
+            document.getElementById('areaValue').textContent = area.toFixed(2) + ' га';
+            document.getElementById('treesValue').textContent = numTrees;
+
+            const baseRadius = parseInt(baseRadiusSlider.value);
+            const envMultiplier = getEnvironmentalMultiplier();
+            const effectiveRadius = baseRadius * envMultiplier;
+
+            document.getElementById('maxRadiusValue').textContent = effectiveRadius.toFixed(0) + ' м';
+            document.getElementById('multiplierValue').textContent = envMultiplier.toFixed(2) + 'x';
+        }
+
+        // Helper to generate short readable IDs (e.g. 123-456-789)
+        function generateShortId() {
+            const part1 = Math.floor(100 + Math.random() * 900); // 100-999
+            const part2 = Math.floor(100 + Math.random() * 900); // 100-999
+            const part3 = Math.floor(100 + Math.random() * 900); // 100-999
+            return `${part1}-${part2}-${part3}`;
+        }
+
+        // Handle polygon creation
+        map.on(L.Draw.Event.CREATED, function (e) {
+            const layer = e.layer;
+
+            // Assign unique ID (Custom Short ID)
+            const polyId = generateShortId();
+            layer.id = polyId;
+
+            // Handle Polylines (Water & Electricity)
+            if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
+                const tool = activeToolSelect.value;
+                if (tool === 'water') {
+                    layer.setStyle({
+                        color: '#3b82f6',
+                        weight: 4
+                    });
+                    layer.bindTooltip("Water Pipeline", { sticky: true });
+                    waterLines.push({
+                        layer: layer,
+                        id: polyId,
+                        latlngs: layer.getLatLngs()
+                    });
+                } else if (tool === 'electricity') {
+                    layer.setStyle({
+                        color: '#eab308',
+                        weight: 4,
+                        dashArray: '10, 10'
+                    });
+                    layer.bindTooltip("Electricity Line", { sticky: true });
+                    electricityLines.push({
+                        layer: layer,
+                        id: polyId,
+                        latlngs: layer.getLatLngs()
+                    });
+                }
+                drawnItems.addLayer(layer);
+                return;
+            }
+
+            // Check if this is a Red Zone (created while in Manual Mode + Red Zone tool)
+            if (manualMode && activeToolSelect.value === 'red_zone') {
+                layer.setStyle({
+                    color: '#ef4444', // Red-500
+                    fillColor: '#ef4444',
+                    fillOpacity: 0.3,
+                    weight: 3
+                });
+                layer.bindTooltip(`RED ZONE ${polyId}`, { permanent: true, direction: "center", className: "polygon-id-tooltip" });
+                layer.bindPopup(`<strong>RED ZONE ${polyId}</strong><br>Planting required`);
+
+                drawnItems.addLayer(layer);
+                redZones.push({
+                    layer: layer,
+                    id: polyId,
+                    latlngs: layer.getLatLngs()[0]
+                });
+            } else {
+                // Normal Forest Polygon
+                layer.bindTooltip(polyId, { permanent: true, direction: "center", className: "polygon-id-tooltip" });
+                layer.bindPopup(`<strong>Polygon ID:</strong><br>${polyId}`);
+
+                drawnItems.addLayer(layer);
+                generateTrees(layer, String(polyId)); // Explicitly pass as string
+            }
+        });
+
+        // Handle polygon deletion (Selective Deletion)
+        map.on(L.Draw.Event.DELETED, function (e) {
+            console.log('Deleted event fired', e);
+            e.layers.eachLayer(function (layer) {
+                console.log('Processing deleted layer:', layer);
+                if (layer.id) {
+                    const targetId = String(layer.id);
+
+                    // Track for Incremental Sync
+                    if (layer instanceof L.Polygon) {
+                        // Check if it's a Red Zone or a Forest Polygon
+                        const isRedZone = redZones.some(rz => String(rz.id) === targetId);
+                        if (isRedZone) {
+                            deletedRedZoneIds.add(targetId);
+                            redZones = redZones.filter(rz => String(rz.id) !== targetId);
+                        } else {
+                            deletedPolygonIds.add(targetId);
+                            // Also track linked trees for deletion
+                            trees.filter(t => t.polygonId && String(t.polygonId) === targetId)
+                                .forEach(t => { if (t.cloudId) deletedTreeIds.add(t.cloudId); });
+                        }
+                    } else if (layer instanceof L.Polyline) {
+                        if (waterLines.some(wl => String(wl.id) === targetId)) {
+                            deletedWaterLineIds.add(targetId);
+                            waterLines = waterLines.filter(wl => String(wl.id) !== targetId);
+                        } else if (electricityLines.some(el => String(el.id) === targetId)) {
+                            deletedElectricityLineIds.add(targetId);
+                            electricityLines = electricityLines.filter(el => String(el.id) !== targetId);
+                        }
+                    }
+
+                    // Remove trees linked to this polygon (from local state)
+                    let treesToRemove = trees.filter(t => {
+                        return t.polygonId && String(t.polygonId) === targetId;
+                    });
+
+                    // Fallback: Spatial check
+                    if (treesToRemove.length === 0 && layer instanceof L.Polygon) {
+                        treesToRemove = trees.filter(t => isPointInPolygon(t.position, layer));
+                    }
+
+                    treesToRemove.forEach(t => {
+                        map.removeLayer(t.marker);
+                        if (t.cloudId) deletedTreeIds.add(t.cloudId);
+                    });
+
+                    trees = trees.filter(t => !treesToRemove.includes(t));
+                }
+            });
+            updatePhytoncideVisualization();
+            updateTotalStatistics();
+        });
+
+        // Clear button
+        clearBtn.addEventListener('click', function () {
+            // Track all current objects for Cloud Deletion
+            trees.forEach(t => { if (t.cloudId) deletedTreeIds.add(String(t.cloudId)); });
+            drawnItems.eachLayer(layer => {
+                if (layer.id) {
+                    const id = String(layer.id);
+                    if (layer instanceof L.Polygon) {
+                        if (redZones.some(rz => String(rz.id) === id)) deletedRedZoneIds.add(id);
+                        else deletedPolygonIds.add(id);
+                    } else if (layer instanceof L.Polyline) {
+                        if (waterLines.some(wl => String(wl.id) === id)) deletedWaterLineIds.add(id);
+                        else if (electricityLines.some(el => String(el.id) === id)) deletedElectricityLineIds.add(id);
+                    }
+                }
+            });
+
+            drawnItems.clearLayers();
+            clearTrees();
+            stats.classList.add('hidden');
+
+            redZones = [];
+            waterLines = [];
+            electricityLines = [];
+
+            showToast('Карта очищена локально. Нажмите сохранить, чтобы применить изменения в облаке.', 'info');
+        });
+
+        // Update statistics based on ALL polygons
+        function updateTotalStatistics() {
+            let totalArea = 0;
+            drawnItems.eachLayer(layer => {
+                if (layer instanceof L.Polygon) {
+                    totalArea += getPolygonArea(layer);
+                }
+            });
+
+            if (totalArea > 0 || trees.length > 0) {
+                updateStatistics(totalArea, trees.length);
+            } else {
+                stats.classList.add('hidden');
+            }
+        }
+
+        // Update button
+        updateBtn.addEventListener('click', function () {
+            if (currentPolygon) {
+                generateTrees(currentPolygon);
+            }
+        });
+
+        // Listen to parameter changes for live update
+        // Listen to parameter changes for live update
+        const params = [seasonSelect, timeOfDaySelect, weatherSelect, windSpeedSlider, baseRadiusSlider, arraySynergySlider, windDirectionSlider];
+
+        // Throttled updater for general params
+        const throttledUpdate = throttle(() => {
+            if (trees.length > 0) {
+                updatePhytoncideVisualization();
+                if (currentPolygon) {
+                    const area = getPolygonArea(currentPolygon);
+                    updateStatistics(area, trees.length);
+                } else {
+                    updateManualStatistics();
+                }
+            }
+        });
+
+        params.forEach(element => {
+            element.addEventListener('input', throttledUpdate);
+            element.addEventListener('change', throttledUpdate);
+        });
+
+        // ====== PARTICLE ANIMATION SYSTEM ======
+
+        // Particle class
+        class Particle {
+            constructor(tree) {
+                this.tree = tree;
+                const point = map.latLngToContainerPoint(tree.position);
+                this.x = point.x;
+                this.y = point.y;
+
+                // Начальное направление основано на ветре с случайным отклонением
+                const windDir = parseInt(windDirectionSlider.value) * Math.PI / 180;
+                const windSpeed = parseFloat(windSpeedSlider.value);
+
+                // Случайное отклонение от направления ветра (±60 градусов)
+                const randomAngleOffset = (Math.random() - 0.5) * (Math.PI / 1.5); // ±60°
+                const particleAngle = windDir + randomAngleOffset;
+
+                // Скорость с учетом ветра и случайности
+                const baseSpeed = 0.2 + Math.random() * 0.4;
+                const windInfluence = windSpeed * 0.1; // Влияние ветра на начальную скорость
+                const speed = baseSpeed + windInfluence;
+
+                this.vx = Math.cos(particleAngle) * speed;
+                this.vy = Math.sin(particleAngle) * speed;
+
+                this.life = 1.0; // 1.0 = fully alive, 0.0 = dead
+                this.maxLife = 300 + Math.random() * 400; // Увеличено время жизни для долгого полета
+                this.age = 0;
+                this.size = 3 + Math.random() * 3; // Увеличен размер для заметности (3-6 пикселей)
+                this.initialSize = this.size;
+            }
+
+            update() {
+                // Wind influence (уменьшено)
+                const windSpeed = parseFloat(windSpeedSlider.value) * 0.08;
+                const windDir = parseInt(windDirectionSlider.value) * Math.PI / 180;
+                const windX = Math.cos(windDir) * windSpeed;
+                const windY = Math.sin(windDir) * windSpeed;
+
+                // Apply wind (плавнее)
+                this.vx += windX * 0.02;
+                this.vy += windY * 0.02;
+
+                // Очень слабая плавучесть (почти не влияет)
+                this.vy -= 0.005; // Уменьшено с 0.02 до 0.005
+
+                // Air resistance (более сильное замедление)
+                this.vx *= 0.985;
+                this.vy *= 0.985;
+
+                // Добавляем небольшую турбулентность (уменьшена)
+                this.vx += (Math.random() - 0.5) * 0.05;
+                this.vy += (Math.random() - 0.5) * 0.05;
+
+                // Update position
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Update life
+                this.age++;
+                this.life = 1.0 - (this.age / this.maxLife);
+
+                // Environmental decay rate
+                const envMultiplier = getEnvironmentalMultiplier();
+                const decayRate = 2.0 / envMultiplier; // Higher multiplier = slower decay
+                this.life -= decayRate / this.maxLife;
+            }
+
+            draw() {
+                const opacity = Math.max(0, this.life * 1.0); // Увеличена непрозрачность
+                const size = this.initialSize * (0.5 + this.life * 0.5); // Уменьшается со временем
+
+                // Создаем градиент для более красивого эффекта
+                const gradient = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, size);
+                gradient.addColorStop(0, `rgba(200, 255, 200, ${opacity})`);
+                gradient.addColorStop(0.5, `rgba(150, 255, 150, ${opacity * 0.8})`);
+                gradient.addColorStop(1, `rgba(100, 200, 100, ${opacity * 0.3})`);
+
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            isDead() {
+                return this.life <= 0 || this.age >= this.maxLife;
+            }
+        }
+
+
+        // Generate particles from trees
+        function generateParticles() {
+            if (!isParticleAnimationEnabled || trees.length === 0) return;
+
+            // Ограничиваем количество частиц для производительности
+            const maxParticlesPerTree = 2;
+
+            trees.forEach(tree => {
+                // Подсчитываем существующие частицы от этого дерева
+                const treeParticles = particles.filter(p => p.tree === tree).length;
+
+                // Генерируем новые только если меньше максимума
+                if (treeParticles < maxParticlesPerTree && Math.random() < 0.15) {
+                    particles.push(new Particle(tree));
+                }
+            });
+
+            // Limit total particles for performance (уменьшен лимит)
+            const maxTotalParticles = Math.min(trees.length * 2, 500);
+            if (particles.length > maxTotalParticles) {
+                particles = particles.slice(-maxTotalParticles);
+            }
+        }
+
+
+
+        // Animation loop
+        function animate() {
+            // Clear canvases
+            ctx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
+
+            // Generate and update particles
+            if (isParticleAnimationEnabled) {
+                // Update tree positions on canvas (in case map moved)
+                particles.forEach(particle => {
+                    const point = map.latLngToContainerPoint(particle.tree.position);
+                    const baseX = point.x;
+                    const baseY = point.y;
+
+                    // Keep relative position to tree
+                    if (particle.age === 0) {
+                        particle.x = baseX;
+                        particle.y = baseY;
+                    }
+                });
+
+                generateParticles();
+
+                particles = particles.filter(p => !p.isDead());
+                particles.forEach(p => {
+                    p.update();
+                    p.draw();
+                });
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // Start animation
+        animate();
+
+        // Update particle positions when map moves
+        map.on('move', () => {
+            // Particles will auto-adjust based on tree positions in next frame
+        });
+
+
+
+        // ===== MOBILE SWIPEABLE DRAWER LOGIC =====
+        const mobileSettingsBtn = document.getElementById('mobileSettingsBtn');
+        const closePanelBtn = document.getElementById('closePanelBtn');
+        const drawerHandle = document.getElementById('drawerHandle');
+        const controlPanel = document.getElementById('controlPanel');
+
+        let touchStartY = 0;
+        let isDragging = false;
+        let currentTranslate = 0;
+        let initialTranslate = 0;
+
+        function openDrawer() {
+            controlPanel.style.transition = 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
+            controlPanel.style.transform = 'translateY(0)';
+            controlPanel.classList.remove('translate-y-full');
+            currentTranslate = 0;
+            // Prevent body scroll when open on mobile
+            if (window.innerWidth < 768) {
+                document.body.style.overflow = 'hidden';
+            }
+        }
+
+        function closeDrawer() {
+            controlPanel.style.transition = 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
+            controlPanel.style.transform = 'translateY(100%)';
+            controlPanel.classList.add('translate-y-full');
+            currentTranslate = window.innerHeight;
+            document.body.style.overflow = '';
+        }
+
+        function toggleDrawer() {
+            const isClosed = controlPanel.classList.contains('translate-y-full') ||
+                (controlPanel.style.transform && controlPanel.style.transform !== 'translateY(0px)');
+            if (isClosed) {
+                openDrawer();
+            } else {
+                closeDrawer();
+            }
+        }
+
+        // Click handlers
+        if (mobileSettingsBtn) {
+            mobileSettingsBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleDrawer();
+            });
+        }
+
+        // Custom close button handler
+        if (closePanelBtn) {
+            closePanelBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeDrawer();
+            });
+        }
+
+        // Click on handle to close
+        if (drawerHandle) {
+            drawerHandle.addEventListener('click', (e) => {
+                // Only close if not dragging
+                if (!isDragging) {
+                    closeDrawer();
+                }
+            });
+        }
+
+        // Touch/drag handlers for swipeable drawer
+        if (drawerHandle) {
+            let startY = 0;
+            let currentY = 0;
+            let startTime = 0;
+
+            drawerHandle.addEventListener('touchstart', (e) => {
+                e.stopPropagation();
+                startY = e.touches[0].clientY;
+                currentY = startY; // Initialize currentY to startY
+                startTime = Date.now();
+                isDragging = true;
+                controlPanel.style.transition = 'none';
+
+                // Get current translateY
+                const style = window.getComputedStyle(controlPanel);
+                const matrix = new WebKitCSSMatrix(style.transform);
+                initialTranslate = matrix.m42;
+            }, { passive: false });
+
+            drawerHandle.addEventListener('touchmove', (e) => {
+                if (!isDragging) return;
+                e.stopPropagation();
+                if (e.cancelable) e.preventDefault();
+
+                currentY = e.touches[0].clientY;
+                const diff = currentY - startY;
+
+                // Don't allow dragging above fully open
+                let newTranslate = Math.max(0, initialTranslate + diff);
+                controlPanel.style.transform = `translateY(${newTranslate}px)`;
+                currentTranslate = newTranslate;
+            }, { passive: false });
+
+            drawerHandle.addEventListener('touchend', (e) => {
+                if (!isDragging) return;
+                isDragging = false;
+
+                const endTime = Date.now();
+                const duration = endTime - startTime;
+                const diff = currentY - startY;
+
+                // Snap logic: if swiped fast or moved more than 20% of height
+                const threshold = window.innerHeight * 0.2;
+                const velocity = Math.abs(diff) / duration;
+
+                if (diff > threshold || (velocity > 0.5 && diff > 0)) {
+                    closeDrawer();
+                } else {
+                    openDrawer();
+                }
+            }, { passive: true });
+        }
+
+
+
+        // ===== THEME & LANGUAGE MANAGEMENT =====
+
+        // Theme Toggle
+        const themeToggle = document.getElementById('themeToggle');
+        const html = document.documentElement;
+
+        // Load saved theme (default to dark)
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        if (savedTheme === 'dark') {
+            html.classList.add('dark');
+        } else {
+            html.classList.remove('dark');
+        }
+
+        themeToggle.addEventListener('click', () => {
+            html.classList.toggle('dark');
+            const newTheme = html.classList.contains('dark') ? 'dark' : 'light';
+            localStorage.setItem('theme', newTheme);
+        });
+
+        // Language Management
+        const langBtn = document.getElementById('langBtn');
+        const langDropdown = document.getElementById('langDropdown');
+        const currentLangSpan = document.getElementById('currentLang');
+        const langOptions = document.querySelectorAll('.lang-option');
+
+        // Translations object
+        const translations = {
+            ru: {
+                backButton: "На главную",
+                panelTitle: "Фитонциды ели",
+                panelSubtitle: "Интерактивная карта распространения",
+                workMode: "Режим работы",
+                workModePolygon: "Рисование области (авто-генерация)",
+                workModeManual: "Ручное размещение деревьев",
+                activeTool: "Инструмент",
+                toolTree: "🌲 Дерево",
+                toolWater: "💧 Вода",
+                toolElectricity: "⚡ Электричество",
+                toolRedZone: "🛑 Красная зона",
+                instructionBoxTitle: "Инструкция:",
+                instructionBoxText: "Нажмите на карте, затем кликайте для создания полигона лесной области. Двойной клик завершает рисование.",
+                mapLayer: "Слой карты",
+                mapLayerOsm: "Стандартная карта",
+                mapLayerSatellite: "Спутниковая (для определения лесов)",
+                treeSection: "Параметры деревьев",
+                treeDensity: "Плотность деревьев",
+                densityRare: "Редко (5/га)",
+                densityDense: "Густо (50/га)",
+                environmentSection: "Окружающая среда",
+                season: "Сезон",
+                seasonSpring: "Весна (↑ активность)",
+                seasonSummer: "Лето (максимум)",
+                seasonAutumn: "Осень (↓ активность)",
+                seasonWinter: "Зима (минимум)",
+                timeOfDay: "Время суток",
+                timeMorning: "Утро (6:00-12:00)",
+                timeDay: "День (12:00-18:00)",
+                timeEvening: "Вечер (18:00-22:00)",
+                timeNight: "Ночь (22:00-6:00)",
+                weather: "Погода",
+                weatherSunny: "Солнечно (↑ выделение)",
+                weatherCloudy: "Облачно (норма)",
+                weatherRainy: "Дождь (↓ выделение)",
+                weatherFoggy: "Туман (плохое рассеивание)",
+                windSection: "Параметры ветра",
+                windSpeed: "Скорость ветра",
+                windCalm: "Штиль",
+                windStrong: "Сильный",
+                windDirection: "Направление ветра",
+                windNorth: "С (0°)",
+                windNorthEast: "СВ",
+                windEast: "В (90°)",
+                windSouthEast: "ЮВ",
+                windSouth: "Ю (180°)",
+                windSouthWest: "ЮЗ",
+                windWest: "З (270°)",
+                windNorthWest: "СЗ",
+                phytoSection: "Параметры фитонцидов",
+                baseRadius: "Базовый радиус действия",
+                arrayEffect: "Эффект массива",
+                effectWeak: "Слабый",
+                effectStrong: "Сильный",
+                arrayEffectDesc: "Усиление при перекрытии зон деревьев",
+                instructionManual: "Кликайте по карте для размещения деревьев. Используйте спутниковый слой для определения реальных лесных массивов.",
+                visualSection: "Визуализация",
+                layerOpacity: "Прозрачность слоя",
+                opacityTransparent: "Прозрачный",
+                opacityOpaque: "Непрозрачный",
+                opacityDesc: "Видимость зеленого слоя фитонцидов",
+                particles: "Анимация частиц",
+                particlesDesc: "Показывать движение и испарение фитонцидов",
+                actionsSection: "Действия",
+                btnClear: "Очистить карту",
+                btnUpdate: "Обновить",
+                btnSave: "Сохранить локально",
+                btnDelete: "Удалить локальное сохранение",
+                btnSaveCloud: "Сохранить в облако",
+                btnLoadCloud: "Загрузить из облака",
+                saveCloudSuccess: "Проект сохранен в облако!",
+                loadCloudSuccess: "Проект загружен из облака!",
+                cloudError: "Ошибка облачного сохранения/загрузки.",
+                statsTitle: "Статистика",
+                statArea: "Площадь",
+                statTrees: "Деревьев",
+                statRadius: "Макс. радиус",
+                statMultiplier: "Множитель",
+                legendTitle: "Легенда",
+                legendSpruce: "Ель (дерево)",
+                legendConcentration: "Концентрация фитонцидов:",
+                legendLow: "Низкая",
+                legendHigh: "Высокая",
+                attribution: "Научные данные основаны на исследованиях фитонцидной активности хвойных",
+                alertDrawFirst: "Сначала нарисуйте область или разместите деревья!",
+                saveSuccess: "Проект успешно сохранен!",
+                deleteSuccess: "Сохранение удалено.",
+                confirmDelete: "Вы уверены, что хотите удалить сохраненные данные?",
+                adminRequired: "Требуются права администратора",
+                adminLoginTitle: "Вход администратора",
+                btnLogin: "Войти",
+                adminPasswordLabel: "Пароль",
+                adminError: "Неверный пароль"
+            },
+            kz: {
+                backButton: "Басты бетке",
+                panelTitle: "Шырша фитонцидтері",
+                panelSubtitle: "Таралудың интерактивті картасы",
+                workMode: "Жұмыс режимі",
+                workModePolygon: "Аймақты сызу (авто-генерация)",
+                workModeManual: "Ағаштарды қолмен орналастыру",
+                activeTool: "Құрал",
+                toolTree: "🌲 Ағаш",
+                toolWater: "💧 Су",
+                toolElectricity: "⚡ Электр",
+                toolRedZone: "🛑 Қызыл аймақ",
+                instructionBoxTitle: "Нұсқаулық:",
+                instructionBoxText: "Картада басыңыз, содан кейін орман аймағының полигонын жасау үшін басыңыз. Қос басу аяқтайды.",
+                mapLayer: "Карта қабаты",
+                mapLayerOsm: "Стандартты карта",
+                mapLayerSatellite: "Спутниктік (ормандарды анықтау үшін)",
+                treeSection: "Ағаш параметрлері",
+                treeDensity: "Ағаш тығыздығы",
+                densityRare: "Сирек (5/га)",
+                densityDense: "Тығыз (50/га)",
+                environmentSection: "Қоршаған орта",
+                season: "Маусым",
+                seasonSpring: "Көктем (↑ белсенділік)",
+                seasonSummer: "Жаз (максимум)",
+                seasonAutumn: "Күз (↓ белсенділік)",
+                seasonWinter: "Қыс (минимум)",
+                timeOfDay: "Тәулік уақыты",
+                timeMorning: "Таң (6:00-12:00)",
+                timeDay: "Күн (12:00-18:00)",
+                timeEvening: "Кеш (18:00-22:00)",
+                timeNight: "Түн (22:00-6:00)",
+                weather: "Ауа райы",
+                weatherSunny: "Ашық (↑ бөлу)",
+                weatherCloudy: "Бұлтты (норма)",
+                weatherRainy: "Жаңбыр (↓ бөлу)",
+                weatherFoggy: "Тұман (нашар таралу)",
+                windSection: "Жел параметрлері",
+                windSpeed: "Жел жылдамдығы",
+                windCalm: "Штиль",
+                windStrong: "Күшті",
+                windDirection: "Жел бағыты",
+                windNorth: "С (0°)",
+                windNorthEast: "СШ",
+                windEast: "Ш (90°)",
+                windSouthEast: "ОШ",
+                windSouth: "О (180°)",
+                windSouthWest: "ОБ",
+                windWest: "Б (270°)",
+                windNorthWest: "СБ",
+                phytoSection: "Фитонцид параметрлері",
+                baseRadius: "Базалық әсер радиусы",
+                arrayEffect: "Массив эффектісі",
+                effectWeak: "Әлсіз",
+                effectStrong: "Күшті",
+                arrayEffectDesc: "Ағаш аймақтарының қабаттасуында күшею",
+                instructionManual: "Ағаштарды орналастыру үшін картаны басыңыз. Нақты орман массивтерін анықтау үшін спутниктік қабатты пайдаланыңыз.",
+                visualSection: "Визуализация",
+                layerOpacity: "Қабат мөлдірлігі",
+                opacityTransparent: "Мөлдір",
+                opacityOpaque: "Мөлдір емес",
+                opacityDesc: "Жасыл фитонцид қабатының көрінуі",
+                particles: "Бөлшектер анимациясы",
+                particlesDesc: "Фитонцидтердің қозғалысы мен булануын көрсету",
+                actionsSection: "Әрекеттер",
+                btnClear: "Картаны тазалау",
+                btnUpdate: "Жаңарту",
+                btnSave: "Жобаны локальді сақтау",
+                btnDelete: "Локальді сақтауды жою",
+                btnSaveCloud: "Бұлтқа сақтау",
+                btnLoadCloud: "Бұлттан жүктеу",
+                saveCloudSuccess: "Жоба бұлтқа сақталды!",
+                loadCloudSuccess: "Жоба бұлттан жүктелді!",
+                cloudError: "Бұлттық сақтау/жүктеу қатесі.",
+                statsTitle: "Статистика",
+                statArea: "Аумақ",
+                statTrees: "Ағаштар",
+                statRadius: "Макс. радиус",
+                statMultiplier: "Көбейткіш",
+                legendTitle: "Легенда",
+                legendSpruce: "Шырша (ағаш)",
+                legendConcentration: "Фитонцид концентрациясы:",
+                legendLow: "Төмен",
+                legendHigh: "Жоғары",
+                attribution: "Ғылыми деректер қылқан жапырақты ағаштардың фитонцидтік белсенділігін зерттеуге негізделген",
+                alertDrawFirst: "Алдымен аймақты сызыңыз немесе ағаштарды орналастырыңыз!",
+                saveSuccess: "Жоба сәтті сақталды!",
+                deleteSuccess: "Сақтау жойылды.",
+                confirmDelete: "Сақталған деректерді жойғыңыз келетініне сенімдісіз бе?",
+                adminRequired: "Администратор құқықтары қажет",
+                adminLoginTitle: "Администратор кіруі",
+                btnLogin: "Кіру",
+                adminPasswordLabel: "Құпия сөз",
+                adminError: "Құпия сөз қате"
+            },
+            en: {
+                backButton: "Back to Home",
+                panelTitle: "Spruce Phytoncides",
+                panelSubtitle: "Interactive distribution map",
+                workMode: "Work Mode",
+                workModePolygon: "Area Drawing (auto-generation)",
+                workModeManual: "Manual Tree Placement",
+                activeTool: "Tool",
+                toolTree: "🌲 Tree",
+                toolWater: "💧 Water",
+                toolElectricity: "⚡ Electricity",
+                toolRedZone: "🛑 Red Zone",
+                instructionBoxTitle: "Instructions:",
+                instructionBoxText: "Click on the map, then click to create a forest area polygon. Double-click to finish.",
+                mapLayer: "Map Layer",
+                mapLayerOsm: "Standard Map",
+                mapLayerSatellite: "Satellite (for forest identification)",
+                treeSection: "Tree Parameters",
+                treeDensity: "Tree Density",
+                densityRare: "Rare (5/ha)",
+                densityDense: "Dense (50/ha)",
+                environmentSection: "Environment",
+                season: "Season",
+                seasonSpring: "Spring (↑ activity)",
+                seasonSummer: "Summer (maximum)",
+                seasonAutumn: "Autumn (↓ activity)",
+                seasonWinter: "Winter (minimum)",
+                timeOfDay: "Time of Day",
+                timeMorning: "Morning (6:00-12:00)",
+                timeDay: "Day (12:00-18:00)",
+                timeEvening: "Evening (18:00-22:00)",
+                timeNight: "Night (22:00-6:00)",
+                weather: "Weather",
+                weatherSunny: "Sunny (↑ emission)",
+                weatherCloudy: "Cloudy (normal)",
+                weatherRainy: "Rain (↓ emission)",
+                weatherFoggy: "Fog (poor dispersion)",
+                windSection: "Wind Parameters",
+                windSpeed: "Wind Speed",
+                windCalm: "Calm",
+                windStrong: "Strong",
+                windDirection: "Wind Direction",
+                windNorth: "N (0°)",
+                windNorthEast: "NE",
+                windEast: "E (90°)",
+                windSouthEast: "SE",
+                windSouth: "S (180°)",
+                windSouthWest: "SW",
+                windWest: "W (270°)",
+                windNorthWest: "NW",
+                phytoSection: "Phytoncide Parameters",
+                baseRadius: "Base Action Radius",
+                arrayEffect: "Array Effect",
+                effectWeak: "Weak",
+                effectStrong: "Strong",
+                arrayEffectDesc: "Enhancement when tree zones overlap",
+                instructionManual: "Click on the map to place trees. Use satellite layer to identify real forest areas.",
+                visualSection: "Visualization",
+                layerOpacity: "Layer Opacity",
+                opacityTransparent: "Transparent",
+                opacityOpaque: "Opaque",
+                opacityDesc: "Visibility of green phytoncide layer",
+                particles: "Particle Animation",
+                particlesDesc: "Show movement and evaporation of phytoncides",
+                actionsSection: "Actions",
+                btnClear: "Clear Map",
+                btnUpdate: "Update",
+                btnSave: "Save Locally",
+                btnDelete: "Delete Local Save",
+                btnSaveCloud: "Save to Cloud",
+                btnLoadCloud: "Load from Cloud",
+                saveCloudSuccess: "Project saved to cloud!",
+                loadCloudSuccess: "Project loaded from cloud!",
+                cloudError: "Cloud save/load error.",
+                statsTitle: "Statistics",
+                statArea: "Area",
+                statTrees: "Trees",
+                statRadius: "Max. Radius",
+                statMultiplier: "Multiplier",
+                legendTitle: "Legend",
+                legendSpruce: "Spruce (tree)",
+                legendConcentration: "Phytoncide Concentration:",
+                legendLow: "Low",
+                legendHigh: "High",
+                attribution: "Scientific data is based on studies of phytoncide activity in conifers",
+                alertDrawFirst: "Draw an area or place trees first!",
+                saveSuccess: "Project saved successfully!",
+                deleteSuccess: "Save deleted.",
+                confirmDelete: "Are you sure you want to delete the saved data?",
+                adminRequired: "Admin rights required",
+                adminLoginTitle: "Admin Login",
+                btnLogin: "Login",
+                adminPasswordLabel: "Password",
+                adminError: "Invalid password"
+            },
+            es: {
+                backButton: "Volver al inicio",
+                panelTitle: "Fitoncidas de Abeto",
+                panelSubtitle: "Mapa interactivo de distribución",
+                workMode: "Modo de trabajo",
+                workModePolygon: "Dibujo de área (auto-generación)",
+                workModeManual: "Colocación manual de árboles",
+                activeTool: "Herramienta",
+                toolTree: "🌲 Árbol",
+                toolWater: "💧 Agua",
+                toolElectricity: "⚡ Electricidad",
+                toolRedZone: "🛑 Zona Roja",
+                instructionBoxTitle: "Instrucciones:",
+                instructionBoxText: "Haga clic en el mapa, luego haga clic para crear un polígono de área forestal. Doble clic para finalizar.",
+                mapLayer: "Capa del mapa",
+                mapLayerOsm: "Mapa estándar",
+                mapLayerSatellite: "Satélite (para identificación de bosques)",
+                treeSection: "Parámetros de árboles",
+                treeDensity: "Densidad de árboles",
+                densityRare: "Raro (5/ha)",
+                densityDense: "Denso (50/ha)",
+                environmentSection: "Ambiente",
+                season: "Estación",
+                seasonSpring: "Primavera (↑ actividad)",
+                seasonSummer: "Verano (máximo)",
+                seasonAutumn: "Otoño (↓ actividad)",
+                seasonWinter: "Invierno (mínimo)",
+                timeOfDay: "Hora del día",
+                timeMorning: "Mañana (6:00-12:00)",
+                timeDay: "Día (12:00-18:00)",
+                timeEvening: "Tarde (18:00-22:00)",
+                timeNight: "Noche (22:00-6:00)",
+                weather: "Clima",
+                weatherSunny: "Soleado (↑ emisión)",
+                weatherCloudy: "Nublado (normal)",
+                weatherRainy: "Lluvia (↓ emisión)",
+                weatherFoggy: "Niebla (mala dispersión)",
+                windSection: "Parámetros del viento",
+                windSpeed: "Velocidad del viento",
+                windCalm: "Calma",
+                windStrong: "Fuerte",
+                windDirection: "Dirección del viento",
+                windNorth: "N (0°)",
+                windNorthEast: "NE",
+                windEast: "E (90°)",
+                windSouthEast: "SE",
+                windSouth: "S (180°)",
+                windSouthWest: "SO",
+                windWest: "O (270°)",
+                windNorthWest: "NO",
+                phytoSection: "Parámetros de fitoncidas",
+                baseRadius: "Radio de acción base",
+                arrayEffect: "Efecto de matriz",
+                effectWeak: "Débil",
+                effectStrong: "Fuerte",
+                arrayEffectDesc: "Mejora cuando las zonas de árboles se superponen",
+                instructionManual: "Haga clic en el mapa para colocar árboles. Use la capa satelital para identificar áreas forestales reales.",
+                visualSection: "Visualización",
+                layerOpacity: "Opacidad de capa",
+                opacityTransparent: "Transparente",
+                opacityOpaque: "Opaco",
+                opacityDesc: "Visibilidad de la capa verde de fitoncidas",
+                particles: "Animación de partículas",
+                particlesDesc: "Mostrar movimiento y evaporación de fitoncidas",
+                actionsSection: "Acciones",
+                btnClear: "Limpiar mapa",
+                btnUpdate: "Actualizar",
+                btnSave: "Guardar localmente",
+                btnDelete: "Eliminar guardado local",
+                btnSaveCloud: "Guardar en la nube",
+                btnLoadCloud: "Cargar desde la nube",
+                saveCloudSuccess: "¡Proyecto guardado en la nube!",
+                loadCloudSuccess: "¡Proyecto cargado desde la nube!",
+                cloudError: "Error de guardado/carga en la nube.",
+                statsTitle: "Estadísticas",
+                statArea: "Área",
+                statTrees: "Árboles",
+                statRadius: "Radio máx.",
+                statMultiplier: "Multiplicador",
+                legendTitle: "Leyenda",
+                legendSpruce: "Abeto (árbol)",
+                legendConcentration: "Concentración de fitoncidas:",
+                legendLow: "Baja",
+                legendHigh: "Alta",
+                attribution: "Los datos científicos se basan en estudios de la actividad fitoncida en coníferas",
+                alertDrawFirst: "¡Primero dibuje un área o coloque árboles!",
+                saveSuccess: "¡Proyecto guardado con éxito!",
+                deleteSuccess: "Guardado eliminado.",
+                confirmDelete: "¿Está seguro de que desea eliminar los datos guardados?"
+            },
+            zh: {
+                backButton: "返回首页",
+                panelTitle: "云杉植物杀菌素",
+                panelSubtitle: "交互式分布地图",
+                workMode: "工作模式",
+                workModePolygon: "区域绘制（自动生成）",
+                workModeManual: "手动放置树木",
+                activeTool: "工具",
+                toolTree: "🌲 树木",
+                toolWater: "💧 水",
+                toolElectricity: "⚡ 电力",
+                toolRedZone: "🛑 红区",
+                instructionBoxTitle: "说明：",
+                instructionBoxText: "点击地图，然后点击创建森林区域多边形。双击完成。",
+                mapLayer: "地图图层",
+                mapLayerOsm: "标准地图",
+                mapLayerSatellite: "卫星（用于森林识别）",
+                treeSection: "树木参数",
+                treeDensity: "树木密度",
+                densityRare: "稀疏 (5/公顷)",
+                densityDense: "茂密 (50/公顷)",
+                environmentSection: "环境",
+                season: "季节",
+                seasonSpring: "春季（↑活动）",
+                seasonSummer: "夏季（最大）",
+                seasonAutumn: "秋季（↓活动）",
+                seasonWinter: "冬季（最小）",
+                timeOfDay: "一天中的时间",
+                timeMorning: "早晨（6:00-12:00）",
+                timeDay: "白天（12:00-18:00）",
+                timeEvening: "傍晚（18:00-22:00）",
+                timeNight: "夜晚（22:00-6:00）",
+                weather: "天气",
+                weatherSunny: "晴天（↑排放）",
+                weatherCloudy: "多云（正常）",
+                weatherRainy: "雨天（↓排放）",
+                weatherFoggy: "雾（扩散差）",
+                windSection: "风参数",
+                windSpeed: "风速",
+                windCalm: "平静",
+                windStrong: "强风",
+                windDirection: "风向",
+                windNorth: "北 (0°)",
+                windNorthEast: "东北",
+                windEast: "东 (90°)",
+                windSouthEast: "东南",
+                windSouth: "南 (180°)",
+                windSouthWest: "西南",
+                windWest: "西 (270°)",
+                windNorthWest: "西北",
+                phytoSection: "植物杀菌素参数",
+                baseRadius: "基础作用半径",
+                arrayEffect: "阵列效应",
+                effectWeak: "弱",
+                effectStrong: "强",
+                arrayEffectDesc: "树木区域重叠时的增强",
+                instructionManual: "点击地图放置树木。使用卫星图层识别真实森林区域。",
+                visualSection: "可视化",
+                layerOpacity: "图层不透明度",
+                opacityTransparent: "透明",
+                opacityOpaque: "不透明",
+                opacityDesc: "绿色植物杀菌素层的可见性",
+                particles: "粒子动画",
+                particlesDesc: "显示植物杀菌素的运动和蒸发",
+                actionsSection: "操作",
+                btnClear: "清除地图",
+                btnUpdate: "更新",
+                btnSave: "本地保存",
+                btnDelete: "删除本地存档",
+                btnSaveCloud: "保存到云端",
+                btnLoadCloud: "从云端加载",
+                saveCloudSuccess: "项目已保存到云端！",
+                loadCloudSuccess: "项目已从云端加载！",
+                cloudError: "云端保存/加载错误。",
+                statsTitle: "统计",
+                statArea: "面积",
+                statTrees: "树木",
+                statRadius: "最大半径",
+                statMultiplier: "系数",
+                legendTitle: "图例",
+                legendSpruce: "云杉 (树木)",
+                legendConcentration: "植物杀菌素浓度：",
+                legendLow: "低",
+                legendHigh: "高",
+                attribution: "科学数据基于针对针叶树植物杀菌活性的研究",
+                alertDrawFirst: "请先绘制区域或放置树木！",
+                saveSuccess: "项目保存成功！",
+                deleteSuccess: "存档已删除。",
+                confirmDelete: "您确定要删除保存的数据吗？"
+            }
+        };
+
+        // Load saved language
+        const savedLang = localStorage.getItem('language') || 'ru';
+        setLanguage(savedLang);
+
+        // Toggle dropdown
+        langBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            langDropdown.classList.toggle('active');
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', () => {
+            langDropdown.classList.remove('active');
+        });
+
+        // Language selection
+        langOptions.forEach(option => {
+            option.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const lang = option.dataset.lang;
+                setLanguage(lang);
+                localStorage.setItem('language', lang);
+                langDropdown.classList.remove('active');
+            });
+        });
+
+        // Set language function
+        function setLanguage(lang) {
+            const langMap = {
+                ru: 'RU',
+                kz: 'KZ',
+                en: 'EN',
+                es: 'ES',
+                zh: 'ZH'
+            };
+
+            currentLangSpan.textContent = langMap[lang] || 'RU';
+
+            const t = translations[lang] || translations.ru;
+
+            // Update all elements with data-i18n
+            document.querySelectorAll('[data-i18n]').forEach(element => {
+                const key = element.getAttribute('data-i18n');
+                if (t[key]) {
+                    // Specific handling for different element types if needed
+                    if (element.tagName === 'INPUT' && (element.type === 'button' || element.type === 'submit')) {
+                        element.value = t[key];
+                    } else if (element.tagName === 'OPTION') {
+                        element.text = t[key];
+                    } else {
+                        element.textContent = t[key];
+                    }
+                }
+            });
+
+            // Update instruction text
+            updateInstructionText();
+
+            // Refresh wind direction label if visible
+            const degrees = parseInt(windDirectionSlider.value);
+            const directions = {
+                0: t.windNorth || 'С', 45: t.windNorthEast || 'СВ', 90: t.windEast || 'В', 135: t.windSouthEast || 'ЮВ',
+                180: t.windSouth || 'Ю', 225: t.windSouthWest || 'ЮЗ', 270: t.windWest || 'З', 315: t.windNorthWest || 'СЗ'
+            };
+            const nearest = Math.round(degrees / 45) * 45;
+            const dirLabel = directions[nearest % 360] || (t.windNorth || 'С');
+            windDirectionValue.textContent = `${dirLabel} (${degrees}°)`;
+        }
+
+
+        // ===== SUPABASE STATE SYNC =====
+
+        let syncTimer = null;
+        const SYNC_DEBOUNCE_MS = 1000;
+
+        // Collect current state into a JSON object
+        function getAppState() {
+            // Collect all polygons with their IDs
+            const polygons = [];
+            drawnItems.eachLayer(layer => {
+                if (layer instanceof L.Polygon) {
+                    // Check if this polygon is actually a Red Zone
+                    const isRedZone = redZones.some(rz => rz.layer === layer || String(rz.id) === String(layer.id));
+
+                    if (!isRedZone) {
+                        polygons.push({
+                            id: layer.id || crypto.randomUUID(), // Ensure ID exists
+                            latlngs: layer.getLatLngs()[0].map(p => ({ lat: p.lat, lng: p.lng }))
+                        });
+                    }
+                }
+            });
+
+            return {
+                trees: trees.map(t => ({
+                    lat: t.position.lat,
+                    lng: t.position.lng,
+                    cloudId: t.cloudId || null,
+                    mode: t.mode || 'polygon',
+                    polygonId: t.polygonId || null // Save linkage
+                })),
+                water: [], // Deprecated
+                electricity: [], // Deprecated
+                redZones: redZones.map(rz => ({
+                    id: rz.id,
+                    latlngs: rz.latlngs.map(p => ({ lat: p.lat, lng: p.lng }))
+                })),
+                waterLines: waterLines.map(wl => ({
+                    id: wl.id,
+                    latlngs: wl.latlngs.map(p => ({ lat: p.lat, lng: p.lng }))
+                })),
+                electricityLines: electricityLines.map(el => ({
+                    id: el.id,
+                    latlngs: el.latlngs.map(p => ({ lat: p.lat, lng: p.lng }))
+                })),
+                polygons: polygons, // Save logical array
+                polygon: null, // Deprecated single polygon
+                settings: {
+                    treeDensity: treeDensitySlider.value,
+                    season: seasonSelect.value,
+                    timeOfDay: timeOfDaySelect.value,
+                    weather: weatherSelect.value,
+                    windSpeed: windSpeedSlider.value,
+                    windDirection: windDirectionSlider.value,
+                    baseRadius: baseRadiusSlider.value,
+                    arraySynergy: arraySynergySlider.value,
+                    layerOpacity: layerOpacitySlider.value,
+                    waterOpacity: waterOpacitySlider.value,
+                    electricityOpacity: electricityOpacitySlider.value,
+                    redZoneOpacity: redZoneOpacitySlider.value,
+                    activeTab: document.querySelector('.tab-btn.active')?.getAttribute('data-tab') || 'tree',
+                    workMode: workModeSelect.value,
+                    mapLayer: mapLayerSelect.value,
+                    particleAnimation: isParticleAnimationEnabled,
+                    theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
+                    language: localStorage.getItem('language') || 'ru'
+                },
+                mapView: {
+                    center: { lat: map.getCenter().lat, lng: map.getCenter().lng },
+                    zoom: map.getZoom()
+                }
+            };
+        }
+
+        // Apply state from JSON object to the app
+        async function applyAppState(state) {
+            if (!state || isSyncing) return;
+            isSyncing = true;
+
+            try {
+                // 0. Restore Map View
+                if (state.mapView && state.mapView.center) {
+                    map.setView(
+                        [state.mapView.center.lat, state.mapView.center.lng],
+                        state.mapView.zoom || 13
+                    );
+                }
+
+                // 1. Update Settings/UI
+                if (state.settings) {
+                    if (state.settings.treeDensity) {
+                        treeDensitySlider.value = state.settings.treeDensity;
+                        treeDensityValue.textContent = state.settings.treeDensity + '/га';
+                    }
+
+                    if (state.settings.season) seasonSelect.value = state.settings.season;
+                    if (state.settings.timeOfDay) timeOfDaySelect.value = state.settings.timeOfDay;
+                    if (state.settings.weather) weatherSelect.value = state.settings.weather;
+
+                    if (state.settings.windSpeed) {
+                        windSpeedSlider.value = state.settings.windSpeed;
+                        windSpeedValue.textContent = state.settings.windSpeed + ' м/с';
+                    }
+
+                    if (state.settings.windDirection) {
+                        windDirectionSlider.value = state.settings.windDirection;
+                        windDirectionSlider.dispatchEvent(new Event('input'));
+                    }
+
+                    if (state.settings.baseRadius) {
+                        baseRadiusSlider.value = state.settings.baseRadius;
+                        baseRadiusValue.textContent = state.settings.baseRadius + ' м';
+                    }
+
+                    if (state.settings.arraySynergy) {
+                        arraySynergySlider.value = state.settings.arraySynergy;
+                        arraySynergyValue.textContent = state.settings.arraySynergy + '%';
+                    }
+
+                    if (state.settings.layerOpacity) {
+                        layerOpacitySlider.value = state.settings.layerOpacity;
+                        layerOpacityMultiplier = parseInt(state.settings.layerOpacity) / 100;
+                        layerOpacityValue.textContent = state.settings.layerOpacity + '%';
+                    }
+
+
+
+                    if (state.settings.mapLayer && state.settings.mapLayer !== mapLayerSelect.value) {
+                        mapLayerSelect.value = state.settings.mapLayer;
+                        mapLayerSelect.dispatchEvent(new Event('change'));
+                    }
+
+                    // Restore particle animation toggle
+                    if (state.settings.particleAnimation !== undefined) {
+                        isParticleAnimationEnabled = state.settings.particleAnimation;
+                        particleToggle.checked = isParticleAnimationEnabled;
+                    }
+                }
+
+                // 2. Clear current map items
+                clearTrees();
+
+                // Clear Water/Electricity/RedZone layers from MAP before clearing arrays
+                waterLines.forEach(l => map.removeLayer(l.layer));
+                electricityLines.forEach(l => map.removeLayer(l.layer));
+                redZones.forEach(rz => map.removeLayer(rz.layer));
+
+                drawnItems.clearLayers();
+
+                // Now clear the local data arrays
+                redZones = [];
+                waterLines = [];
+                electricityLines = [];
+
+                // 3. Restore Polygons (Multiple)
+                if (state.polygons && Array.isArray(state.polygons)) {
+                    state.polygons.forEach(polyData => {
+                        if (polyData && polyData.latlngs) {
+                            const latlngs = polyData.latlngs.map(p => [p.lat, p.lng]);
+                            const layer = L.polygon(latlngs, {
+                                color: '#15803d',
+                                weight: 3,
+                                fillOpacity: 0.1
+                            });
+
+                            // Restore ID and Tooltip + Popup
+                            if (polyData.id) {
+                                layer.id = polyData.id;
+                                layer.bindTooltip(polyData.id, { permanent: true, direction: "center", className: "polygon-id-tooltip" });
+                                layer.bindPopup(`<strong>Polygon ID:</strong><br>${polyData.id}`);
+                            }
+
+                            layer.addTo(drawnItems);
+                        }
+                    });
+                }
+                // Fallback for old single-polygon saves
+                else if (state.polygon && Array.isArray(state.polygon) && state.polygon.length > 0) {
+                    const latlngs = state.polygon.map(p => [p.lat, p.lng]);
+                    const layer = L.polygon(latlngs, {
+                        color: '#15803d',
+                        weight: 3,
+                        fillOpacity: 0.1
+                    });
+                    // polyId must be UUID for DB
+                    const polyId = crypto.randomUUID();
+                    layer.id = polyId;
+                    layer.bindTooltip(polyId.substring(0, 8) + '...', { permanent: true, direction: "center", className: "polygon-id-tooltip" });
+                    layer.bindPopup(`<strong>Polygon ID:</strong><br>${polyId}`);
+                    layer.addTo(drawnItems);
+                }
+
+                // 4. Restore Trees
+                if (state.trees && Array.isArray(state.trees)) {
+                    state.trees.forEach(pos => {
+                        if (!pos || typeof pos.lat !== 'number' || typeof pos.lng !== 'number') return;
+
+                        // Ensure we have an ID
+                        const treeId = pos.cloudId || generateShortId();
+
+                        const latlng = L.latLng(pos.lat, pos.lng);
+                        const treeMarker = L.circleMarker(latlng, {
+                            radius: 8,
+                            fillColor: '#2d5016',
+                            color: '#ffffff',
+                            weight: 3,
+                            opacity: 1,
+                            fillOpacity: 1,
+                            className: 'tree-marker'
+                        }).addTo(map);
+
+                        const treeObj = {
+                            marker: treeMarker,
+                            position: latlng,
+                            cloudId: treeId,
+                            mode: pos.mode || 'polygon',
+                            polygonId: pos.polygonId ? String(pos.polygonId) : null
+                        };
+
+                        // Add deletion popup only for manual trees
+                        if (treeObj.mode === 'manual') {
+                            addTreeDeletionPopup(treeObj);
+                        }
+
+                        trees.push(treeObj);
+                    });
+                }
+
+                // Water and Electricity points are deprecated, skipping restoration
+
+                // Restore Red Zones
+                if (state.redZones && Array.isArray(state.redZones)) {
+                    state.redZones.forEach(rz => {
+                        const latlngs = rz.latlngs.map(p => [p.lat, p.lng]);
+                        const layer = L.polygon(latlngs, {
+                            color: '#ef4444',
+                            fillColor: '#ef4444',
+                            fillOpacity: redZoneOpacityMultiplier,
+                            weight: 3
+                        });
+                        layer.id = rz.id;
+                        layer.bindTooltip(`RED ZONE ${rz.id}`, { permanent: true, direction: "center", className: "polygon-id-tooltip" });
+                        layer.bindPopup(`<strong>RED ZONE ${rz.id}</strong><br>Planting required`);
+
+                        drawnItems.addLayer(layer);
+                        redZones.push({
+                            layer: layer,
+                            id: rz.id,
+                            latlngs: layer.getLatLngs()[0] // Use layer's data!
+                        });
+                    });
+                }
+
+                // Restore Water Lines
+                if (state.waterLines && Array.isArray(state.waterLines)) {
+                    state.waterLines.forEach(wl => {
+                        const latlngs = wl.latlngs.map(p => [p.lat, p.lng]);
+                        const layer = L.polyline(latlngs, {
+                            color: '#0088ff', // Brighter Blue
+                            weight: 4,
+                            opacity: waterOpacityMultiplier
+                        });
+                        layer.id = wl.id;
+                        layer.bindTooltip("Water Pipeline", { sticky: true });
+
+                        drawnItems.addLayer(layer);
+
+                        waterLines.push({
+                            layer: layer,
+                            id: wl.id,
+                            latlngs: layer.getLatLngs() // Use layer's data!
+                        });
+                    });
+                }
+
+                // Restore Electricity Lines
+                if (state.electricityLines && Array.isArray(state.electricityLines)) {
+                    state.electricityLines.forEach(el => {
+                        const latlngs = el.latlngs.map(p => [p.lat, p.lng]);
+                        const layer = L.polyline(latlngs, {
+                            color: '#eab308',
+                            weight: 4,
+                            dashArray: '10, 10',
+                            opacity: electricityOpacityMultiplier
+                        });
+                        layer.id = el.id;
+                        layer.bindTooltip("Electricity Line", { sticky: true });
+
+                        drawnItems.addLayer(layer);
+
+                        electricityLines.push({
+                            layer: layer,
+                            id: el.id,
+                            latlngs: layer.getLatLngs() // Use layer's data!
+                        });
+                    });
+                }
+
+                // 5. Restore Specific Opacities
+                if (state.settings) {
+                    if (state.settings.waterOpacity) {
+                        waterOpacitySlider.value = state.settings.waterOpacity;
+                        waterOpacityMultiplier = parseInt(state.settings.waterOpacity) / 100;
+                        waterOpacityValue.textContent = state.settings.waterOpacity + '%';
+                    }
+                    if (state.settings.electricityOpacity) {
+                        electricityOpacitySlider.value = state.settings.electricityOpacity;
+                        electricityOpacityMultiplier = parseInt(state.settings.electricityOpacity) / 100;
+                        electricityOpacityValue.textContent = state.settings.electricityOpacity + '%';
+                    }
+                    if (state.settings.redZoneOpacity) {
+                        redZoneOpacitySlider.value = state.settings.redZoneOpacity;
+                        redZoneOpacityMultiplier = parseInt(state.settings.redZoneOpacity) / 100;
+                        redZoneOpacityValue.textContent = state.settings.redZoneOpacity + '%';
+                    }
+                }
+
+                // 6. Restore Tab UI
+                if (state.settings && state.settings.activeTab) {
+                    const targetTab = document.querySelector(`.tab-btn[data-tab="${state.settings.activeTab}"]`);
+                    if (targetTab) targetTab.click();
+                }
+
+                // 7. Final Visual Refresh
+                updatePhytoncideVisualization();
+                updateTotalStatistics();
+
+                // Ensure opacity is applied to restored lines
+                waterLines.forEach(l => l.layer.setStyle({ opacity: waterOpacityMultiplier }));
+                electricityLines.forEach(l => l.layer.setStyle({ opacity: electricityOpacityMultiplier }));
+                redZones.forEach(rz => rz.layer.setStyle({ fillOpacity: redZoneOpacityMultiplier }));
+
+            } catch (err) {
+                console.error('Error applying app state:', err);
+            } finally {
+                isSyncing = false;
+            }
+        }
+
+        // ======= TOAST NOTIFICATION SYSTEM =======
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            const colors = {
+                success: 'bg-emerald-600',
+                error: 'bg-red-600',
+                info: 'bg-blue-600',
+                warning: 'bg-amber-600'
+            };
+            const icons = {
+                success: 'fa-check-circle',
+                error: 'fa-exclamation-circle',
+                info: 'fa-info-circle',
+                warning: 'fa-exclamation-triangle'
+            };
+            toast.className = `${colors[type] || colors.info} text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 pointer-events-auto text-sm font-medium transition-all duration-300 transform translate-x-full opacity-0`;
+            toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> <span>${message}</span>`;
+            container.appendChild(toast);
+
+            // Animate in
+            requestAnimationFrame(() => {
+                toast.classList.remove('translate-x-full', 'opacity-0');
+            });
+
+            // Auto-dismiss after 3 seconds
+            setTimeout(() => {
+                toast.classList.add('translate-x-full', 'opacity-0');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // ======= CLOUD SAVE (INCREMENTAL & ADMIN PROTECTED) =======
+        async function saveToCloud() {
+            const currentLang = localStorage.getItem('language') || 'ru';
+            const t = translations[currentLang] || translations.ru;
+
+            if (!isAdmin) {
+                showToast(t.adminRequired || 'Требуются права администратора для сохранения в облако', 'warning');
+                return;
+            }
+
+            if (!navigator.onLine) {
+                showToast(t.offlineError || 'Нет подключения к интернету.', 'warning');
+                return;
+            }
+
+            const state = getAppState();
+            const isEmpty = state.trees.length === 0 && state.polygons.length === 0 && state.redZones.length === 0 && state.waterLines.length === 0 && state.electricityLines.length === 0;
+            const hasDeletions = deletedTreeIds.size > 0 || deletedPolygonIds.size > 0 || deletedRedZoneIds.size > 0 || deletedWaterLineIds.size > 0 || deletedElectricityLineIds.size > 0;
+
+            if (isEmpty && !hasDeletions) {
+                showToast('Карта пуста. Нечего сохранять.', 'info');
+                return;
+            }
+
+            saveCloudBtn.disabled = true;
+            saveCloudBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>...`;
+
+            try {
+                // 1. Save Settings
+                const { error: settingsError } = await supabaseClient
+                    .from('map_settings')
+                    .upsert({
+                        id: PROJECT_ID,
+                        settings: state.settings,
+                        map_view: state.mapView,
+                        updated_at: new Date().toISOString()
+                    });
+                if (settingsError) throw settingsError;
+
+                // 2. Perform Deletions (Incremental)
+                if (deletedPolygonIds.size > 0) await supabaseClient.from('map_polygons').delete().in('id', Array.from(deletedPolygonIds));
+                if (deletedTreeIds.size > 0) await supabaseClient.from('map_trees').delete().in('id', Array.from(deletedTreeIds));
+                if (deletedRedZoneIds.size > 0) await supabaseClient.from('map_red_zones').delete().in('id', Array.from(deletedRedZoneIds));
+                if (deletedWaterLineIds.size > 0) await supabaseClient.from('map_water_lines').delete().in('id', Array.from(deletedWaterLineIds));
+                if (deletedElectricityLineIds.size > 0) await supabaseClient.from('map_electricity_lines').delete().in('id', Array.from(deletedElectricityLineIds));
+
+                // 3. Upsert Polygons
+                if (state.polygons.length > 0) {
+                    const uniquePolys = Array.from(new Map(state.polygons.map(p => [p.id, p])).values());
+                    const rows = uniquePolys.map(p => ({ id: p.id, project_id: PROJECT_ID, latlngs: p.latlngs }));
+                    const { error } = await supabaseClient.from('map_polygons').upsert(rows);
+                    if (error) throw error;
+                }
+
+                // 4. Upsert Trees
+                if (state.trees.length > 0) {
+                    const treeRows = state.trees.map(t => ({
+                        id: t.cloudId || generateShortId(),
+                        project_id: PROJECT_ID,
+                        lat: t.lat,
+                        lng: t.lng,
+                        mode: t.mode || 'polygon',
+                        polygon_id: t.polygonId || null
+                    }));
+
+                    for (let i = 0; i < treeRows.length; i += 500) {
+                        const batch = treeRows.slice(i, i + 500);
+                        const { data: insertedTrees, error: treesError } = await supabaseClient
+                            .from('map_trees')
+                            .upsert(batch)
+                            .select('id, lat, lng');
+                        if (treesError) throw treesError;
+
+                        if (insertedTrees) {
+                            insertedTrees.forEach((row, idx) => {
+                                const treeIdx = i + idx;
+                                if (treeIdx < trees.length) trees[treeIdx].cloudId = row.id;
+                            });
+                        }
+                    }
+                }
+
+                // 5. Upsert Red Zones
+                if (state.redZones.length > 0) {
+                    const uniqueZones = Array.from(new Map(state.redZones.map(rz => [rz.id, rz])).values());
+                    const rows = uniqueZones.map(rz => ({ id: rz.id, project_id: PROJECT_ID, latlngs: rz.latlngs }));
+                    const { error } = await supabaseClient.from('map_red_zones').upsert(rows);
+                    if (error) throw error;
+                }
+
+                // 6. Upsert Water Lines
+                if (state.waterLines.length > 0) {
+                    const uniqueWater = Array.from(new Map(state.waterLines.map(wl => [wl.id, wl])).values());
+                    const rows = uniqueWater.map(wl => ({ id: wl.id, project_id: PROJECT_ID, latlngs: wl.latlngs }));
+                    const { error } = await supabaseClient.from('map_water_lines').upsert(rows);
+                    if (error) throw error;
+                }
+
+                // 7. Upsert Electricity Lines
+                if (state.electricityLines.length > 0) {
+                    const uniqueElectric = Array.from(new Map(state.electricityLines.map(el => [el.id, el])).values());
+                    const rows = uniqueElectric.map(el => ({ id: el.id, project_id: PROJECT_ID, latlngs: el.latlngs }));
+                    const { error } = await supabaseClient.from('map_electricity_lines').upsert(rows);
+                    if (error) throw error;
+                }
+
+                // Success: Clear deletion sets
+                deletedTreeIds.clear();
+                deletedPolygonIds.clear();
+                deletedRedZoneIds.clear();
+                deletedWaterLineIds.clear();
+                deletedElectricityLineIds.clear();
+
+                const statsMsg = `Saved: ${state.trees.length} Trees, ${state.waterLines.length} Water, ${state.electricityLines.length} Electric`;
+                showToast((t.saveCloudSuccess || 'Saved!') + ` (${statsMsg})`, 'success');
+            } catch (error) {
+                console.error('Cloud save error:', error);
+                let msg = error.message;
+                if (msg.includes('relation') && msg.includes('does not exist')) {
+                    msg += ' (Таблица БД отсутствует. Выполните create_tables.sql в Supabase!)';
+                }
+                showToast(`${t.cloudError || 'Ошибка облачного сохранения'}: ${msg}`, 'error');
+            } finally {
+                saveCloudBtn.disabled = false;
+                saveCloudBtn.innerHTML = `<i class="fas fa-cloud-upload-alt"></i> <span data-i18n="btnSaveCloud">${t.btnSaveCloud}</span>`;
+            }
+        }
+
+        // ======= CLOUD LOAD (3-TABLE SCHEMA) =======
+        async function loadFromCloud() {
+            const currentLang = localStorage.getItem('language') || 'ru';
+            const t = translations[currentLang] || translations.ru;
+
+            if (!navigator.onLine) {
+                showToast(t.offlineError || 'Нет подключения к интернету.', 'warning');
+                return;
+            }
+
+            loadCloudBtn.disabled = true;
+            loadCloudBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>...`;
+
+            try {
+                // 1. Load settings
+                const { data: settingsData, error: settingsError } = await supabaseClient
+                    .from('map_settings')
+                    .select('settings, map_view')
+                    .eq('id', PROJECT_ID)
+                    .single();
+
+                // 2. Load polygons (ALL of them)
+                const { data: polygonData, error: polyError } = await supabaseClient
+                    .from('map_polygons')
+                    .select('id, latlngs')
+                    .eq('project_id', PROJECT_ID);
+
+                // 3. Load trees
+                const { data: treesData, error: treesError } = await supabaseClient
+                    .from('map_trees')
+                    .select('id, lat, lng, mode, polygon_id') // Fetch polygon_id
+                    .eq('project_id', PROJECT_ID);
+
+                // 4. & 5. Water/Electricity Points deprecated
+
+                // 6. Load Red Zones
+                const { data: redZoneData, error: redZoneError } = await supabaseClient
+                    .from('map_red_zones')
+                    .select('id, latlngs')
+                    .eq('project_id', PROJECT_ID);
+
+                if (settingsError && settingsError.code !== 'PGRST116') throw settingsError;
+                if (polyError) throw polyError;
+                if (treesError) throw treesError;
+                // if (waterError) throw waterError;
+                // if (electricityError) throw electricityError;
+                if (redZoneError) throw redZoneError;
+
+                // Check if any data exists
+                const hasSettings = settingsData && settingsData.settings;
+                const hasPolygons = polygonData && polygonData.length > 0;
+                const hasTrees = treesData && treesData.length > 0;
+                const hasWater = false; // Deprecated
+                const hasElectricity = false; // Deprecated
+                const hasRedZones = redZoneData && redZoneData.length > 0;
+
+                if (!hasSettings && !hasPolygons && !hasTrees && !hasWater && !hasElectricity && !hasRedZones) {
+                    showToast(t.noCloudData || 'В облаке нет сохранённых данных.', 'info');
+                    return;
+                }
+
+                // Build a state object compatible with applyAppState
+                const cloudState = {
+                    settings: hasSettings ? settingsData.settings : null,
+                    mapView: hasSettings ? settingsData.map_view : null,
+                    polygons: hasPolygons ? polygonData : [], // Pass all polygons
+                    trees: hasTrees ? treesData.map(row => ({
+                        lat: row.lat,
+                        lng: row.lng,
+                        cloudId: row.id,
+                        mode: row.mode || 'polygon',
+                        polygonId: row.polygon_id // Restore linkage
+                    })) : [],
+                    water: [],
+                    electricity: [],
+                    redZones: hasRedZones ? redZoneData : [],
+                    waterLines: [],
+                    electricityLines: []
+                };
+
+                // Load Water Lines
+                const { data: waterLinesData, error: waterLinesError } = await supabaseClient
+                    .from('map_water_lines')
+                    .select('id, latlngs')
+                    .eq('project_id', PROJECT_ID);
+                if (waterLinesError) throw waterLinesError;
+                if (waterLinesData && waterLinesData.length > 0) {
+                    cloudState.waterLines = waterLinesData;
+                }
+
+                // Load Electricity Lines
+                const { data: electLinesData, error: electLinesError } = await supabaseClient
+                    .from('map_electricity_lines')
+                    .select('id, latlngs')
+                    .eq('project_id', PROJECT_ID);
+                if (electLinesError) throw electLinesError;
+                if (electLinesData && electLinesData.length > 0) {
+                    cloudState.electricityLines = electLinesData;
+                }
+
+                await applyAppState(cloudState);
+
+                // Clear Deletion Sets on Load
+                deletedTreeIds.clear();
+                deletedPolygonIds.clear();
+                deletedRedZoneIds.clear();
+                deletedWaterLineIds.clear();
+                deletedElectricityLineIds.clear();
+
+                showToast(t.loadCloudSuccess || `Проект загружен: ${(treesData || []).length} деревьев`, 'success');
+
+            } catch (error) {
+                console.error('Cloud load error:', error);
+                let msg = error.message;
+                if (msg.includes('relation') && msg.includes('does not exist')) {
+                    msg += ' (Таблица БД отсутствует. Выполните create_tables.sql в Supabase!)';
+                }
+                showToast(`${t.cloudError || 'Ошибка облачной загрузки'}: ${msg}`, 'error');
+            } finally {
+                loadCloudBtn.disabled = false;
+                loadCloudBtn.innerHTML = `<i class="fas fa-cloud-download-alt"></i> <span data-i18n="btnLoadCloud">${t.btnLoadCloud}</span>`;
+            }
+        }
+
+        // Save state to localStorage
+        function saveProject() {
+            const currentLang = localStorage.getItem('language') || 'ru';
+            const t = translations[currentLang] || translations.ru;
+            try {
+                const state = getAppState();
+                localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(state));
+                showToast(t.saveSuccess || 'Проект сохранен!', 'success');
+            } catch (e) {
+                console.error('localStorage save error:', e);
+                showToast(t.localStorageError || 'Ошибка сохранения: хранилище может быть заполнено.', 'error');
+            }
+        }
+
+        // Delete local storage save
+        function deleteProject() {
+            const currentLang = localStorage.getItem('language') || 'ru';
+            const t = translations[currentLang] || translations.ru;
+
+            if (!isAdmin) {
+                showToast(t.adminRequired || 'Требуются права администратора', 'warning');
+                return;
+            }
+
+            if (confirm(t.confirmDelete || 'Вы уверены?')) {
+                localStorage.removeItem(PROJECT_STORAGE_KEY);
+                // Also clear the current map state
+                drawnItems.clearLayers();
+                clearTrees();
+                stats.classList.add('hidden');
+                currentPolygon = null;
+                showToast(t.deleteSuccess || 'Удалено', 'info');
+            }
+        }
+
+        // Initialize Persistence
+        function initPersistence() {
+            const savedData = localStorage.getItem(PROJECT_STORAGE_KEY);
+            if (savedData) {
+                try {
+                    const state = JSON.parse(savedData);
+                    // Basic validation
+                    if (state && typeof state === 'object') {
+                        applyAppState(state);
+                    } else {
+                        console.warn('Invalid saved data format, ignoring.');
+                    }
+                } catch (e) {
+                    console.error('Error loading project:', e);
+                }
+            }
+        }
+
+        // Initialize persistence after everything is loaded
+        initPersistence();
+
+        // Save button listener
+        saveBtn.addEventListener('click', saveProject);
+
+        // Delete button listener
+        deleteBtn.addEventListener('click', deleteProject);
+
+        // Cloud save listener
+        saveCloudBtn.addEventListener('click', saveToCloud);
+
+        // Cloud load listener
+        loadCloudBtn.addEventListener('click', loadFromCloud);
+
+        // ======= TAB NAVIGATION LOGIC (UI REFACTOR) =======
+        const tabs = document.querySelectorAll('.tab-btn');
+        const treeControls = document.getElementById('treeControls');
+        const lineControls = document.getElementById('lineControls');
+        const zoneControls = document.getElementById('zoneControls');
+        const instructionBox = document.getElementById('instructionBox');
+
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                // 1. Activate Tab UI
+                tabs.forEach(t => t.classList.remove('active', 'bg-white', 'dark:bg-gray-600', 'text-forest-700', 'dark:text-forest-400', 'shadow-sm'));
+                tabs.forEach(t => t.classList.add('text-gray-500', 'dark:text-gray-400', 'hover:bg-white/50', 'dark:hover:bg-gray-600/50'));
+
+                tab.classList.add('active', 'bg-white', 'dark:bg-gray-600', 'text-forest-700', 'dark:text-forest-400', 'shadow-sm');
+                tab.classList.remove('text-gray-500', 'dark:text-gray-400', 'hover:bg-white/50', 'dark:hover:bg-gray-600/50');
+
+                // 2. Set Active Tool & Visibility
+                const selectedTab = tab.getAttribute('data-tab');
+                activeToolSelect.value = selectedTab;
+
+                // Hide all sections first
+                // Hide all sections first
+                treeControls.classList.add('hidden');
+                lineControls.classList.add('hidden');
+                zoneControls.classList.add('hidden');
+                waterOpacityContainer.classList.add('hidden');
+                electricityOpacityContainer.classList.add('hidden');
+                redZoneOpacityContainer.classList.add('hidden');
+                instructionBox.classList.add('hidden'); // Default hide, show if needed
+
+                // Default manual mode for non-tree tools
+                if (selectedTab !== 'tree') {
+                    manualMode = true;
+                    // Reset workMode select to manual for consistency (visual only)
+                    if (workModeSelect) workModeSelect.value = 'manual';
+                } else {
+                    // For tree, restore from select or default
+                    manualMode = workModeSelect.value === 'manual';
+                    instructionBox.classList.remove('hidden');
+                }
+
+                // Show relevant section
+                if (selectedTab === 'tree') {
+                    treeControls.classList.remove('hidden');
+                    updateInstructionText();
+                } else if (selectedTab === 'water') {
+                    lineControls.classList.remove('hidden');
+                    waterOpacityContainer.classList.remove('hidden');
+                } else if (selectedTab === 'electricity') {
+                    lineControls.classList.remove('hidden');
+                    electricityOpacityContainer.classList.remove('hidden');
+                } else if (selectedTab === 'red_zone') {
+                    zoneControls.classList.remove('hidden');
+                    redZoneOpacityContainer.classList.remove('hidden');
+                }
+
+                // 3. Update Map Interactions (Draw Control vs Click)
+                updateMapInteraction(selectedTab);
+            });
+        });
+
+        // Helper to update map interaction based on tool
+        function updateMapInteraction(tool) {
+            // Remove existing handlers
+            if (window.drawControl) {
+                map.removeControl(window.drawControl);
+            }
+            map.off('click', onMapClick);
+
+            if (tool === 'tree') {
+                if (manualMode) {
+                    map.on('click', onMapClick);
+                } else {
+                    // Polygon for Tree Area
+                    window.drawControl = new L.Control.Draw({
+                        position: 'topleft',
+                        draw: {
+                            polygon: {
+                                allowIntersection: true,
+                                showArea: true,
+                                shapeOptions: { color: '#15803d', weight: 3, fillOpacity: 0.1 }
+                            },
+                            polyline: false, rectangle: false, circle: false, marker: false, circlemarker: false
+                        },
+                        edit: { featureGroup: drawnItems, remove: true }
+                    });
+                    map.addControl(window.drawControl);
+                }
+            } else if (tool === 'water') {
+                // Polyline for Water
+                // Brighter Blue: #0088ff
+                window.drawControl = new L.Control.Draw({
+                    position: 'topleft',
+                    draw: {
+                        polyline: { shapeOptions: { color: '#0088ff', weight: 4, opacity: waterOpacityMultiplier } },
+                        polygon: false, rectangle: false, circle: false, marker: false, circlemarker: false
+                    },
+                    edit: { featureGroup: drawnItems, remove: true }
+                });
+                map.addControl(window.drawControl);
+            } else if (tool === 'electricity') {
+                // Polyline for Electricity
+                window.drawControl = new L.Control.Draw({
+                    position: 'topleft',
+                    draw: {
+                        polyline: { shapeOptions: { color: '#eab308', weight: 4, dashArray: '10, 10', opacity: electricityOpacityMultiplier } },
+                        polygon: false, rectangle: false, circle: false, marker: false, circlemarker: false
+                    },
+                    edit: { featureGroup: drawnItems, remove: true }
+                });
+                map.addControl(window.drawControl);
+            } else if (tool === 'red_zone') {
+                // Polygon for Red Zone
+                window.drawControl = new L.Control.Draw({
+                    position: 'topleft',
+                    draw: {
+                        polygon: {
+                            allowIntersection: true,
+                            showArea: true,
+                            shapeOptions: { color: '#ef4444', weight: 3, fillOpacity: redZoneOpacityMultiplier }
+                        },
+                        polyline: false, rectangle: false, circle: false, marker: false, circlemarker: false
+                    },
+                    edit: { featureGroup: drawnItems, remove: true }
+                });
+                map.addControl(window.drawControl);
+            }
+        }
+
+        // Hook into WorkMode change (for Tree tab)
+        workModeSelect.addEventListener('change', (e) => {
+            manualMode = e.target.value === 'manual';
+            updateInstructionText();
+            updateMapInteraction('tree');
+        });
+
+        // Initialize default state
+        updateMapInteraction('tree');
+
+
+    </script>
+</body>
+
+</html>
